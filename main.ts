@@ -11,7 +11,7 @@
 // Outside the grader, MAKEFUN_OUTPUT_DIR stands in for /output; without it the
 // program writes to /output. Run it twice and the bytes must match.
 
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-app.ts';
@@ -19,9 +19,11 @@ import { buildDossier } from './vendor/makefun-app.ts';
 const repoRoot = fileURLToPath(new URL('.', import.meta.url));
 const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
-// Start from a clean output directory so a rerun can never leave stale files
-// behind; the grader runs in a fresh container, where this is a no-op.
-rmSync(outDir, { recursive: true, force: true });
+// No rmSync here on purpose: the grader runs as an unprivileged user on a
+// read-only filesystem, so deleting the output directory itself fails — its
+// parent is read-only even though the directory is writable (EACCES). The
+// grader always starts from an empty /output, and mkdirSync is a no-op when
+// the directory already exists.
 mkdirSync(outDir, { recursive: true });
 
 cpSync(join(repoRoot, 'app'), join(outDir, 'app'), { recursive: true });
