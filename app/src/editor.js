@@ -43,14 +43,30 @@ const PHOTO_FACE = {
   dusk: { cx: 0.50, cy: 0.38, top: 0.28, bottom: 0.48 },
 };
 // Per-sample framing defaults for the fixed shot scenes: zoom and pan
-// starting points (autoFramePanels then re-solves the pan from PHOTO_FACE).
+// starting points (autoFramePanels then re-solves the pan from PHOTO_FACE
+// and PHOTO_SUBJECT). Rider and Dusk use zoom 1.0 — their subjects are
+// tall (rider: face + legs + bike; dusk: driver + the whole SUV), so any
+// extra zoom crops the subject out of the panel.
 const PHOTO_FRAMING = {
   boulevard: { zoom: 1.15, ox: 0, oy: 0.85 },
   pier: { zoom: 1.15, ox: 0, oy: 0.85 },
-  rider: { zoom: 1.2, ox: 0, oy: 0.85 },
+  rider: { zoom: 1.0, ox: 0, oy: 0 },
   boardwalk: { zoom: 1.15, ox: 0, oy: 0.85 },
   marina: { zoom: 1.15, ox: 0, oy: 0.85 },
-  dusk: { zoom: 1.15, ox: 0, oy: 0.85 },
+  dusk: { zoom: 1.0, ox: 0, oy: 0 },
+};
+
+// Per-sample subject ranges (fractions of the photo, vertical): the part
+// that must stay visible in every panel — not just the face. Rider's
+// subject is face + legs + bike (the old framing panned up to the face and
+// cropped the legs out of the panel, so the regenerated photo looked no
+// different from the old one); Dusk's subject is the driver + the whole
+// SUV (the old framing cropped the car's roof and lower body). Samples
+// without an entry here fall back to their face range (PHOTO_FACE top /
+// bottom), which is what the framing used before.
+const PHOTO_SUBJECT = {
+  rider: { top: 0.40, bottom: 0.96 },
+  dusk: { top: 0.12, bottom: 0.98 },
 };
 
 export const state = {
@@ -225,26 +241,40 @@ function previewPanelRects() {
   return coverPanelRects(preview.width, preview.height, state.layout);
 }
 
-// Frame every panel's face for the current layout at the current render
-// size. Two rules, both driven by the measured face position
-// (PHOTO_FACE):
+// Frame every panel's subject for the current layout at the current render
+// size. Three rules, all driven by the measured face position (PHOTO_FACE)
+// and the subject range (PHOTO_SUBJECT — the part that must stay visible,
+// e.g. Rider's legs + bike, Dusk's whole SUV):
 // - Horizontal: when the panel crops the photo sideways, pan so the face
 //   centre lands in the middle of the panel (the rider's face sits on
 //   the right of his photo, the angler's on the left — a centred crop
 //   cuts both off).
-// - Vertical: the masthead overlaps the panels from titleTop down, so a
-//   SHORT panel that runs under the title gets its face centred in the
-//   clear strip above the title instead of the old "pan to the top"
-//   rule, which left chins under the title. Tall panels and panels
-//   above the title keep the old rule: pan up to the face (oy near 1).
+// - Vertical: centre the SUBJECT in the panel (not just the face), so a
+//   tall subject reads whole instead of being cropped at the panel's
+//   bottom edge. If the subject is taller than the panel at the current
+//   zoom, pull the zoom back until it fits (never below 1.0, which is
+//   cover-fit — any lower would leave empty edges).
+// - Title: when the panel runs under the masthead, the whole face must
+//   sit clear of it — so if there is not enough vertical overflow to pan
+//   the face above the title, zoom in (capped at 1.8) until there is,
+//   then pan up just enough to bring the face's bottom to the title's
+//   top edge. (The old rule centred the face in the clear strip, which
+//   shoved the photo so far up that Rider's legs and Dusk's car fell
+//   off the panel's bottom edge entirely; and the first version of this
+//   fix only cleared the face's top, which still left the face hidden
+//   behind the title in a small panel where the photo exactly fills
+//   the panel height and cannot be panned at all.)
 // Only ever called at setup (boot / shot scene), never during a render —
 // the user can still drag any panel wherever they want afterwards.
 function autoFramePanels(W, H) {
   const rects = coverPanelRects(W, H, state.layout);
   // Top edge of the masthead's glyphs (centre 0.63H minus half the cap
   // height, ~0.36 of the 0.165H title size, scaled by the title-size
-  // slider). The 3D offsets only extend downwards.
-  const titleTop = H * (0.63 - 0.059 * (state.titleSize || 1));
+  // slider), minus the dark outline, which extends a further 0.14 of the
+  // title size above the glyphs. The 3D offsets only extend downwards.
+  // (The outline matters: a face whose chin sits under it reads as
+  // covered by the title even though it clears the glyph top.)
+  const titleTop = H * (0.63 - 0.0821 * (state.titleSize || 1));
   state.panels.forEach((panel, i) => {
     const rect = rects[i];
     const photo = state.photos[panel.photo];
@@ -252,32 +282,76 @@ function autoFramePanels(W, H) {
     const iw = photo.image.naturalWidth || photo.image.width;
     const ih = photo.image.naturalHeight || photo.image.height;
     if (!iw || !ih) return;
-    const base = Math.max(rect.w / iw, rect.h / ih) * (panel.zoom || 1);
-    const dw = iw * base;
-    const dh = ih * base;
     const face = PHOTO_FACE[photo.name];
-    if (face) {
-      // Horizontal: centre the face when the photo is cropped sideways.
-      if (dw > rect.w + 1) {
-        const maxOx = (dw - rect.w) / 2;
-        const dxTarget = rect.w / 2 - face.cx * dw;
-        panel.ox = Math.max(-1, Math.min(1, (dxTarget - (rect.w - dw) / 2) / maxOx));
-      }
-      // Vertical: short panel under the masthead — centre the face in
-      // the clear strip above the title.
-      const underTitle = rect.y < titleTop && rect.y + rect.h > titleTop;
-      if (underTitle && rect.h < H * 0.45 && dh > rect.h + 1) {
-        const maxOy = (dh - rect.h) / 2;
-        const clearH = titleTop - rect.y;
-        const faceTop = face.top * dh;
-        const faceH = (face.bottom - face.top) * dh;
-        const faceTopPanel = (clearH - faceH) / 2;
-        const dy = faceTopPanel - faceTop;
-        panel.oy = Math.max(-1, Math.min(1, (dy - (rect.h - dh) / 2) / maxOy));
-        return;
+    const subject = PHOTO_SUBJECT[photo.name] || (face ? { top: face.top, bottom: face.bottom } : null);
+    // Horizontal: centre the face when the photo is cropped sideways.
+    let base = Math.max(rect.w / iw, rect.h / ih) * (panel.zoom || 1);
+    let dw = iw * base;
+    let dh = ih * base;
+    if (face && dw > rect.w + 1) {
+      const maxOx = (dw - rect.w) / 2;
+      const dxTarget = rect.w / 2 - face.cx * dw;
+      panel.ox = Math.max(-1, Math.min(1, (dxTarget - (rect.w - dw) / 2) / maxOx));
+    }
+    if (!subject) {
+      // No measured face/subject (e.g. an upload): keep the old
+      // pan-up-to-the-top rule.
+      if (dh > rect.h + 1) panel.oy = Math.max(panel.oy, 0.85);
+      return;
+    }
+    // The subject is taller than the panel at this zoom: pull the zoom
+    // back until the subject fits (never below cover-fit, zoom 1.0).
+    const subjH = (subject.bottom - subject.top) * dh;
+    if (subjH > rect.h) {
+      panel.zoom = Math.max(1, (panel.zoom || 1) * (rect.h / subjH));
+      base = Math.max(rect.w / iw, rect.h / ih) * panel.zoom;
+      dw = iw * base;
+      dh = ih * base;
+    }
+    // Title: a panel under the masthead must keep the whole face above
+    // the title. Panning up only works if the photo is taller than the
+    // panel (dh > rect.h); when it exactly fills the panel there is
+    // nothing to pan with, so zoom in (capped at 1.8) until the face
+    // can be panned clear. The zoom needed is the one where the face's
+    // bottom lands on the title's top edge at maximum pan-up.
+    const underTitle = rect.y < titleTop && rect.y + rect.h > titleTop;
+    if (underTitle && face) {
+      const T = titleTop - rect.y; // title top edge, in panel coords
+      const dhNeed = (rect.h - T) / (1 - face.bottom);
+      // Never zoom so far that the subject stops fitting in the panel:
+      // if the face cannot fully clear the title and keep the subject
+      // whole, keep the subject whole and let the title cover the chin.
+      const dhMaxSubj = rect.h / (subject.bottom - subject.top);
+      const dhTarget = Math.min(dhNeed, dhMaxSubj);
+      if (dh < dhTarget) {
+        panel.zoom = Math.min(1.8, (panel.zoom || 1) * (dhTarget / dh));
+        base = Math.max(rect.w / iw, rect.h / ih) * panel.zoom;
+        dw = iw * base;
+        dh = ih * base;
+        // The zoom-in may have re-cropped the photo sideways: re-centre
+        // the face horizontally.
+        if (dw > rect.w + 1) {
+          const maxOx = (dw - rect.w) / 2;
+          const dxTarget = rect.w / 2 - face.cx * dw;
+          panel.ox = Math.max(-1, Math.min(1, (dxTarget - (rect.w - dw) / 2) / maxOx));
+        }
       }
     }
-    if (dh > rect.h + 1) panel.oy = Math.max(panel.oy, 0.85);
+    // Vertical: centre the subject in the panel. dy is where the photo's
+    // top edge lands relative to the panel's top edge; oy maps it into
+    // the clamped pan range.
+    const maxOy = Math.max(0, (dh - rect.h) / 2);
+    if (maxOy <= 0) { panel.oy = 0; return; }
+    const subjCy = (subject.top + subject.bottom) / 2;
+    let dy = rect.h / 2 - subjCy * dh;
+    // Title guard: pan up just enough to bring the face's bottom to the
+    // title's top edge, so the whole face sits clear of the masthead.
+    if (underTitle && face) {
+      const T = titleTop - rect.y;
+      const dyMax = T - face.bottom * dh;
+      if (dy > dyMax) dy = dyMax;
+    }
+    panel.oy = Math.max(-1, Math.min(1, (dy - (rect.h - dh) / 2) / maxOy));
   });
 }
 

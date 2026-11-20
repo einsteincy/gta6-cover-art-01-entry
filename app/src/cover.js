@@ -43,13 +43,17 @@ export const TITLE_FONTS = [
 // Title colour templates (the editor's Colour template picker, below the
 // script subtitle). Each preset is a three-stop gradient for the title.
 // Sunset is the default and is exactly the striped gradient the cover
-// always had (yellow/pink/purple). Vice is pink/purple neon, Neon is
-// magenta/cyan, Gold is gold on dark.
+// always had (yellow/pink/purple) — do not change it. The other three were
+// reworked for readability: their old top stops were near-white (#ff8ac2,
+// #a5f3fc, #fef9c3), which washed out against the bright sunset sky, so
+// every stop is now a saturated mid-to-deep colour — the title stays
+// clearly readable in every font and style, with the dark outline and 3D
+// offsets defining the letter shapes.
 export const TITLE_TEMPLATES = [
   { id: 'sunset', label: 'Sunset', gradient: ['#ffe066', '#ff2e88', '#a855f7'] },
-  { id: 'vice', label: 'Vice', gradient: ['#ff8ac2', '#ff2e88', '#7c3aed'] },
-  { id: 'neon', label: 'Neon', gradient: ['#a5f3fc', '#2fd6ff', '#e879f9'] },
-  { id: 'gold', label: 'Gold', gradient: ['#fef9c3', '#fbbf24', '#b45309'] },
+  { id: 'vice', label: 'Vice', gradient: ['#f472b6', '#db2777', '#7c3aed'] },
+  { id: 'neon', label: 'Neon', gradient: ['#22d3ee', '#0891b2', '#c026d3'] },
+  { id: 'gold', label: 'Gold', gradient: ['#facc15', '#ea580c', '#7c2d12'] },
 ];
 
 // Per-photo sub-caption defaults (own wording): location · time · quip,
