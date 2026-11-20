@@ -6,7 +6,7 @@
 
 import { LAYOUTS, LAYOUT_IDS } from './layouts.js';
 import { GRADES, GRADE_IDS } from './art.js';
-import { EXPORT_SIZES, sizeById, renderCover, renderToCanvas, coverPanelRects, PHOTO_SUBCAPTIONS, TITLE_STYLES } from './cover.js';
+import { EXPORT_SIZES, sizeById, renderCover, renderToCanvas, coverPanelRects, PHOTO_SUBCAPTIONS, TITLE_STYLES, TITLE_FONTS, TITLE_TEMPLATES } from './cover.js';
 
 const SAMPLES = [
   { file: 'boulevard.jpg', label: 'Boulevard' },
@@ -37,10 +37,10 @@ const PHOTO_TAGS = {
 const PHOTO_FACE = {
   boulevard: { cx: 0.45, cy: 0.36, top: 0.11, bottom: 0.56 },
   pier: { cx: 0.35, cy: 0.20, top: 0.05, bottom: 0.32 },
-  rider: { cx: 0.50, cy: 0.22, top: 0.10, bottom: 0.33 },
+  rider: { cx: 0.48, cy: 0.50, top: 0.40, bottom: 0.60 },
   boardwalk: { cx: 0.42, cy: 0.45, top: 0.20, bottom: 0.53 },
   marina: { cx: 0.50, cy: 0.47, top: 0.21, bottom: 0.66 },
-  dusk: { cx: 0.50, cy: 0.50, top: 0.28, bottom: 0.70 },
+  dusk: { cx: 0.50, cy: 0.38, top: 0.28, bottom: 0.48 },
 };
 // Per-sample framing defaults for the fixed shot scenes: zoom and pan
 // starting points (autoFramePanels then re-solves the pan from PHOTO_FACE).
@@ -70,6 +70,8 @@ export const state = {
   taglineColor: '#ffd166',
   titleSize: 1,
   titleStyle: 'stripes',
+  titleFont: 'Archivo Black',
+  titleTemplate: 'sunset',
   outline: true,
   // Pop-out hero (default ON): the hero photo breaks ~8% out of its frame
   // over the neighbouring panels, with a drop shadow and a white edge.
@@ -98,7 +100,7 @@ let dragLast = null;
 // The undo stack's top is always the current state; undo pops it onto the
 // redo stack and applies the new top. commitHistory() is called after every
 // completed edit (button click, slider release, drag end, debounced typing).
-const HISTORY_FIELDS = ['layout', 'popout', 'title', 'tagline', 'script', 'titleColor', 'taglineColor', 'titleSize', 'titleStyle', 'outline', 'paintStrength', 'gradeStrength', 'halftoneAmount', 'grainAmount', 'glowAmount', 'grade'];
+const HISTORY_FIELDS = ['layout', 'popout', 'title', 'tagline', 'script', 'titleColor', 'taglineColor', 'titleSize', 'titleStyle', 'titleFont', 'titleTemplate', 'outline', 'paintStrength', 'gradeStrength', 'halftoneAmount', 'grainAmount', 'glowAmount', 'grade'];
 const undoStack = [];
 const redoStack = [];
 function snapshotState() {
@@ -365,6 +367,24 @@ function buildTitleStylePicker() {
   );
 }
 
+function buildTitleFontPicker() {
+  buttonRow(
+    $('title-font-pick'),
+    TITLE_FONTS.map((f) => ({ id: f.id, label: f.label })),
+    state.titleFont || 'Archivo Black',
+    (id) => { state.titleFont = id; commitHistory(); },
+  );
+}
+
+function buildTitleTemplates() {
+  buttonRow(
+    $('title-template-pick'),
+    TITLE_TEMPLATES.map((t) => ({ id: t.id, label: t.label })),
+    state.titleTemplate || 'sunset',
+    (id) => { state.titleTemplate = id; commitHistory(); },
+  );
+}
+
 function buildTitleColors() {
   const box = $('title-colors');
   box.innerHTML = '';
@@ -376,7 +396,10 @@ function buildTitleColors() {
     swatch.setAttribute('aria-label', `Title colour ${color}`);
     swatch.addEventListener('click', () => {
       state.titleColor = color;
+      // A manual swatch pick overrides the colour template.
+      state.titleTemplate = null;
       buildTitleColors();
+      buildTitleTemplates();
       schedulePreview();
       commitHistory();
     });
@@ -720,6 +743,8 @@ function syncAllControls() {
   buildGradePicker();
   buildTitleColors();
   buildTitleStylePicker();
+  buildTitleFontPicker();
+  buildTitleTemplates();
   buildPanelControls();
   buildLookSliders();
   syncStaticInputs();
@@ -732,6 +757,8 @@ function syncStaticInputs() {
   $('script-input').value = state.script;
   $('title-size').value = String(state.titleSize);
   buildTitleStylePicker();
+  buildTitleFontPicker();
+  buildTitleTemplates();
   $('outline-toggle').checked = state.outline !== false;
   $('popout-toggle').checked = state.popout !== false;
 }
@@ -751,6 +778,7 @@ export function surpriseMe() {
   state.tagline = pick(SURPRISE_TAGLINES);
   state.script = pick(SURPRISE_SCRIPTS);
   state.titleColor = pick(TITLE_COLORS);
+  state.titleTemplate = null;
   syncAllControls();
   commitHistory();
   schedulePreview();
@@ -971,6 +999,8 @@ async function waitForFonts() {
   try {
     await Promise.all([
       document.fonts.load('400 100px "Archivo Black"'),
+      document.fonts.load('400 100px Anton'),
+      document.fonts.load('400 100px "Bebas Neue"'),
       document.fonts.load('600 40px Oswald'),
       document.fonts.load('500 40px Oswald'),
       document.fonts.load('400 60px Pacifico'),
@@ -986,6 +1016,8 @@ async function boot() {
   buildGradePicker();
   buildTitleColors();
   buildTitleStylePicker();
+  buildTitleFontPicker();
+  buildTitleTemplates();
   buildSampleButtons();
   buildPanelControls();
   buildLookSliders();

@@ -27,6 +27,31 @@ export const TITLE_STYLES = [
   { id: 'neon', label: 'Neon outline' },
 ];
 
+// Title fonts (the editor's Title font picker, below the script subtitle).
+// All four are OFL-licensed and vendored under app/fonts/. Archivo Black
+// is the default, so the cover does not change unless the user picks one.
+// Anton and Bebas Neue are the GTA-style options: tall, condensed, heavy
+// poster lettering in the spirit of the GTA logo (the actual GTA font,
+// Pricedown, is commercial and is NOT used here).
+export const TITLE_FONTS = [
+  { id: 'Archivo Black', label: 'Archivo Black' },
+  { id: 'Anton', label: 'Anton' },
+  { id: 'Bebas Neue', label: 'Bebas Neue' },
+  { id: 'Oswald', label: 'Oswald' },
+];
+
+// Title colour templates (the editor's Colour template picker, below the
+// script subtitle). Each preset is a three-stop gradient for the title.
+// Sunset is the default and is exactly the striped gradient the cover
+// always had (yellow/pink/purple). Vice is pink/purple neon, Neon is
+// magenta/cyan, Gold is gold on dark.
+export const TITLE_TEMPLATES = [
+  { id: 'sunset', label: 'Sunset', gradient: ['#ffe066', '#ff2e88', '#a855f7'] },
+  { id: 'vice', label: 'Vice', gradient: ['#ff8ac2', '#ff2e88', '#7c3aed'] },
+  { id: 'neon', label: 'Neon', gradient: ['#a5f3fc', '#2fd6ff', '#e879f9'] },
+  { id: 'gold', label: 'Gold', gradient: ['#fef9c3', '#fbbf24', '#b45309'] },
+];
+
 // Per-photo sub-caption defaults (own wording): location · time · quip,
 // shown as the second line under each panel's role tag.
 export const PHOTO_SUBCAPTIONS = {
@@ -107,13 +132,15 @@ function drawEmptyPanel(ctx, rect, u) {
   ctx.restore();
 }
 
-// Fit the title font so the text never runs past maxWidth.
-function fitTitleFont(ctx, text, maxWidth, baseSize) {
+// Fit the title font so the text never runs past maxWidth. `font` is the
+// title font family from state.titleFont (default 'Archivo Black').
+function fitTitleFont(ctx, text, maxWidth, baseSize, font) {
+  const family = font || 'Archivo Black';
   let size = baseSize;
-  ctx.font = `400 ${size}px "Archivo Black", sans-serif`;
+  ctx.font = `400 ${size}px "${family}", sans-serif`;
   const w = ctx.measureText(text).width;
   if (w > maxWidth) size = Math.max(size * 0.45, size * (maxWidth / w));
-  ctx.font = `400 ${size}px "Archivo Black", sans-serif`;
+  ctx.font = `400 ${size}px "${family}", sans-serif`;
   return size;
 }
 
@@ -130,8 +157,13 @@ export function drawPosterTitle(ctx, W, H, state, grade) {
   const title = (state.title || '').toUpperCase();
   if (!title) return;
   const baseSize = H * 0.165 * (state.titleSize || 1);
-  const size = fitTitleFont(ctx, title, W * 0.94, baseSize);
-  const stripes = TITLE_GRADIENTS[state.titleColor] || TITLE_GRADIENTS['#ffd166'];
+  const font = TITLE_FONTS.some((f) => f.id === state.titleFont) ? state.titleFont : 'Archivo Black';
+  const size = fitTitleFont(ctx, title, W * 0.94, baseSize, font);
+  // Colour template wins when set (default 'sunset' = the original
+  // yellow/pink/purple); a manual Title-stripes swatch clears the template
+  // and falls back to the swatch palette.
+  const template = TITLE_TEMPLATES.find((t) => t.id === state.titleTemplate);
+  const stripes = template ? template.gradient : (TITLE_GRADIENTS[state.titleColor] || TITLE_GRADIENTS['#ffd166']);
   const style = state.titleStyle || 'stripes';
   ctx.save();
   ctx.translate(W / 2, H * 0.63);
