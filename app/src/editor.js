@@ -30,15 +30,17 @@ const PHOTO_TAGS = {
 };
 // Per-sample face centres (fractions of the photo), measured from the
 // samples themselves: the face is what the panels must frame. All six
-// samples carry the face in the upper part of the photo, centred
-// horizontally except the pier (face left) and the rider (face right).
+// samples are square (1:1) since the standardisation, cropped face-centred
+// from their originals, so they behave identically in every panel.
+// Faces sit in the upper part of the photo, centred horizontally except
+// the pier (face left).
 const PHOTO_FACE = {
-  boulevard: { cx: 0.45, cy: 0.27, top: 0.08, bottom: 0.42 },
+  boulevard: { cx: 0.45, cy: 0.36, top: 0.11, bottom: 0.56 },
   pier: { cx: 0.35, cy: 0.20, top: 0.05, bottom: 0.32 },
-  rider: { cx: 0.56, cy: 0.22, top: 0.10, bottom: 0.33 },
-  boardwalk: { cx: 0.42, cy: 0.30, top: 0.13, bottom: 0.35 },
-  marina: { cx: 0.50, cy: 0.31, top: 0.14, bottom: 0.44 },
-  dusk: { cx: 0.50, cy: 0.28, top: 0.17, bottom: 0.38 },
+  rider: { cx: 0.50, cy: 0.22, top: 0.10, bottom: 0.33 },
+  boardwalk: { cx: 0.42, cy: 0.45, top: 0.20, bottom: 0.53 },
+  marina: { cx: 0.50, cy: 0.47, top: 0.21, bottom: 0.66 },
+  dusk: { cx: 0.50, cy: 0.50, top: 0.28, bottom: 0.70 },
 };
 // Per-sample framing defaults for the fixed shot scenes: zoom and pan
 // starting points (autoFramePanels then re-solves the pan from PHOTO_FACE).
