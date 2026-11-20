@@ -6,44 +6,60 @@
 
 import { LAYOUTS, LAYOUT_IDS } from './layouts.js';
 import { GRADES, GRADE_IDS } from './art.js';
-import { EXPORT_SIZES, sizeById, renderCover, renderToCanvas, coverPanelRects } from './cover.js';
+import { EXPORT_SIZES, sizeById, renderCover, renderToCanvas, coverPanelRects, PHOTO_SUBCAPTIONS, TITLE_STYLES } from './cover.js';
 
 const SAMPLES = [
   { file: 'boulevard.jpg', label: 'Boulevard' },
   { file: 'pier.jpg', label: 'Pier' },
   { file: 'rider.jpg', label: 'Rider' },
   { file: 'boardwalk.jpg', label: 'Boardwalk' },
+  { file: 'marina.jpg', label: 'Marina' },
+  { file: 'dusk.jpg', label: 'Dusk' },
 ];
-const MAX_PHOTOS = 4;
+const MAX_PHOTOS = 6;
 const TITLE_COLORS = ['#ffffff', '#ffd166', '#2fd6ff', '#ff2e88'];
-const PANEL_TAGS = ['THE DRIVER', 'THE ANGLER', 'THE RIDER', 'THE INSIDER', 'THE COURIER'];
+const PANEL_TAGS = ['THE DRIVER', 'THE ANGLER', 'THE RIDER', 'THE INSIDER', 'THE STARLET', 'THE FIXER'];
 // Role tag that follows the photo (used by the fixed shot scenes).
 const PHOTO_TAGS = {
   boulevard: 'THE DRIVER',
   pier: 'THE ANGLER',
   rider: 'THE RIDER',
   boardwalk: 'THE INSIDER',
+  marina: 'THE STARLET',
+  dusk: 'THE FIXER',
 };
-// Per-sample framing defaults for the fixed shot scenes: where each photo's
-// face sits, so the panels frame faces instead of cutting them off. All four
-// samples carry their face in the top of the photo, so a strong upward pan
-// is the safe default whenever a panel crops vertically.
+// Per-sample face centres (fractions of the photo), measured from the
+// samples themselves: the face is what the panels must frame. All six
+// samples carry the face in the upper part of the photo, centred
+// horizontally except the pier (face left) and the rider (face right).
+const PHOTO_FACE = {
+  boulevard: { cx: 0.45, cy: 0.27, top: 0.08, bottom: 0.42 },
+  pier: { cx: 0.35, cy: 0.20, top: 0.05, bottom: 0.32 },
+  rider: { cx: 0.56, cy: 0.22, top: 0.10, bottom: 0.33 },
+  boardwalk: { cx: 0.42, cy: 0.30, top: 0.13, bottom: 0.35 },
+  marina: { cx: 0.50, cy: 0.31, top: 0.14, bottom: 0.44 },
+  dusk: { cx: 0.50, cy: 0.28, top: 0.17, bottom: 0.38 },
+};
+// Per-sample framing defaults for the fixed shot scenes: zoom and pan
+// starting points (autoFramePanels then re-solves the pan from PHOTO_FACE).
 const PHOTO_FRAMING = {
   boulevard: { zoom: 1.15, ox: 0, oy: 0.85 },
   pier: { zoom: 1.15, ox: 0, oy: 0.85 },
-  rider: { zoom: 1.2, ox: -0.45, oy: 0.85 },
+  rider: { zoom: 1.2, ox: 0, oy: 0.85 },
   boardwalk: { zoom: 1.15, ox: 0, oy: 0.85 },
+  marina: { zoom: 1.15, ox: 0, oy: 0.85 },
+  dusk: { zoom: 1.15, ox: 0, oy: 0.85 },
 };
 
 export const state = {
   layout: 'hero-split',
   photos: [],
   panels: [
-    { photo: 0, zoom: 1.15, ox: 0, oy: 0, tag: 'THE DRIVER', flip: false },
-    { photo: 1, zoom: 1.15, ox: 0, oy: 0, tag: 'THE ANGLER', flip: false },
-    { photo: 2, zoom: 1.15, ox: 0, oy: 0, tag: 'THE RIDER', flip: false },
-    { photo: 3, zoom: 1.15, ox: 0, oy: 0, tag: 'THE INSIDER', flip: false },
-    { photo: 0, zoom: 1.15, ox: 0, oy: 0, tag: 'THE COURIER', flip: false },
+    { photo: 0, zoom: 1.15, ox: 0, oy: 0, tag: 'THE DRIVER', sub: PHOTO_SUBCAPTIONS.boulevard, wanted: false, flip: false },
+    { photo: 1, zoom: 1.15, ox: 0, oy: 0, tag: 'THE ANGLER', sub: PHOTO_SUBCAPTIONS.pier, wanted: true, flip: false },
+    { photo: 2, zoom: 1.15, ox: 0, oy: 0, tag: 'THE RIDER', sub: PHOTO_SUBCAPTIONS.rider, wanted: false, flip: false },
+    { photo: 3, zoom: 1.15, ox: 0, oy: 0, tag: 'THE INSIDER', sub: PHOTO_SUBCAPTIONS.boardwalk, wanted: false, flip: false },
+    { photo: 4, zoom: 1.15, ox: 0, oy: 0, tag: 'THE STARLET', sub: PHOTO_SUBCAPTIONS.marina, wanted: false, flip: false },
   ],
   title: 'SUNSET BOULEVARD',
   tagline: 'EVERY SUNSET HAS A PRICE',
@@ -51,7 +67,11 @@ export const state = {
   titleColor: '#ffd166',
   taglineColor: '#ffd166',
   titleSize: 1,
+  titleStyle: 'stripes',
   outline: true,
+  // Pop-out hero (default ON): the hero photo breaks ~8% out of its frame
+  // over the neighbouring panels, with a drop shadow and a white edge.
+  popout: true,
   // Look amounts (0–100). Defaults reproduce the pre-slider render exactly:
   // full paint + grade, no halftone, medium grain, no title glow.
   paintStrength: 100,
@@ -76,7 +96,7 @@ let dragLast = null;
 // The undo stack's top is always the current state; undo pops it onto the
 // redo stack and applies the new top. commitHistory() is called after every
 // completed edit (button click, slider release, drag end, debounced typing).
-const HISTORY_FIELDS = ['layout', 'title', 'tagline', 'script', 'titleColor', 'taglineColor', 'titleSize', 'outline', 'paintStrength', 'gradeStrength', 'halftoneAmount', 'grainAmount', 'glowAmount', 'grade'];
+const HISTORY_FIELDS = ['layout', 'popout', 'title', 'tagline', 'script', 'titleColor', 'taglineColor', 'titleSize', 'titleStyle', 'outline', 'paintStrength', 'gradeStrength', 'halftoneAmount', 'grainAmount', 'glowAmount', 'grade'];
 const undoStack = [];
 const redoStack = [];
 function snapshotState() {
@@ -202,14 +222,25 @@ function previewPanelRects() {
 }
 
 // Frame every panel's face for the current layout at the current render
-// size. All bundled samples carry their face in the top of the photo, so
-// whenever a panel crops the photo vertically the window is panned up to
-// the top (oy near 1); the rider's face also sits on the right, so the
-// window is panned left when the panel crops horizontally. Only ever
-// called at setup (boot / shot scene), never during a render — the user
-// can still drag any panel wherever they want afterwards.
+// size. Two rules, both driven by the measured face position
+// (PHOTO_FACE):
+// - Horizontal: when the panel crops the photo sideways, pan so the face
+//   centre lands in the middle of the panel (the rider's face sits on
+//   the right of his photo, the angler's on the left — a centred crop
+//   cuts both off).
+// - Vertical: the masthead overlaps the panels from titleTop down, so a
+//   SHORT panel that runs under the title gets its face centred in the
+//   clear strip above the title instead of the old "pan to the top"
+//   rule, which left chins under the title. Tall panels and panels
+//   above the title keep the old rule: pan up to the face (oy near 1).
+// Only ever called at setup (boot / shot scene), never during a render —
+// the user can still drag any panel wherever they want afterwards.
 function autoFramePanels(W, H) {
   const rects = coverPanelRects(W, H, state.layout);
+  // Top edge of the masthead's glyphs (centre 0.63H minus half the cap
+  // height, ~0.36 of the 0.165H title size, scaled by the title-size
+  // slider). The 3D offsets only extend downwards.
+  const titleTop = H * (0.63 - 0.059 * (state.titleSize || 1));
   state.panels.forEach((panel, i) => {
     const rect = rects[i];
     const photo = state.photos[panel.photo];
@@ -218,8 +249,31 @@ function autoFramePanels(W, H) {
     const ih = photo.image.naturalHeight || photo.image.height;
     if (!iw || !ih) return;
     const base = Math.max(rect.w / iw, rect.h / ih) * (panel.zoom || 1);
-    if (ih * base > rect.h + 1) panel.oy = Math.max(panel.oy, 0.85);
-    if (iw * base > rect.w + 1 && photo.name === 'rider') panel.ox = Math.min(panel.ox, -0.45);
+    const dw = iw * base;
+    const dh = ih * base;
+    const face = PHOTO_FACE[photo.name];
+    if (face) {
+      // Horizontal: centre the face when the photo is cropped sideways.
+      if (dw > rect.w + 1) {
+        const maxOx = (dw - rect.w) / 2;
+        const dxTarget = rect.w / 2 - face.cx * dw;
+        panel.ox = Math.max(-1, Math.min(1, (dxTarget - (rect.w - dw) / 2) / maxOx));
+      }
+      // Vertical: short panel under the masthead — centre the face in
+      // the clear strip above the title.
+      const underTitle = rect.y < titleTop && rect.y + rect.h > titleTop;
+      if (underTitle && rect.h < H * 0.45 && dh > rect.h + 1) {
+        const maxOy = (dh - rect.h) / 2;
+        const clearH = titleTop - rect.y;
+        const faceTop = face.top * dh;
+        const faceH = (face.bottom - face.top) * dh;
+        const faceTopPanel = (clearH - faceH) / 2;
+        const dy = faceTopPanel - faceTop;
+        panel.oy = Math.max(-1, Math.min(1, (dy - (rect.h - dh) / 2) / maxOy));
+        return;
+      }
+    }
+    if (dh > rect.h + 1) panel.oy = Math.max(panel.oy, 0.85);
   });
 }
 
@@ -300,6 +354,15 @@ function buildGradePicker() {
   );
 }
 
+function buildTitleStylePicker() {
+  buttonRow(
+    $('title-style-pick'),
+    TITLE_STYLES.map((s) => ({ id: s.id, label: s.label })),
+    state.titleStyle || 'stripes',
+    (id) => { state.titleStyle = id; commitHistory(); },
+  );
+}
+
 function buildTitleColors() {
   const box = $('title-colors');
   box.innerHTML = '';
@@ -356,7 +419,7 @@ function buildPanelControls() {
   box.innerHTML = '';
   for (let i = 0; i < count; i++) {
     if (!state.panels[i]) {
-      state.panels[i] = { photo: i % Math.max(1, state.photos.length), zoom: 1.15, ox: 0, oy: 0, tag: PANEL_TAGS[i] || '', flip: false };
+      state.panels[i] = { photo: i % Math.max(1, state.photos.length), zoom: 1.15, ox: 0, oy: 0, tag: PANEL_TAGS[i] || '', sub: '', wanted: false, flip: false };
     }
     const group = document.createElement('fieldset');
     group.className = 'panel-group';
@@ -392,6 +455,16 @@ function buildPanelControls() {
     const select = document.createElement('select');
     select.addEventListener('change', () => {
       state.panels[i].photo = Number(select.value);
+      // The role tag and sub-caption follow the new photo's defaults.
+      const photo = state.photos[state.panels[i].photo];
+      if (photo) {
+        state.panels[i].tag = PHOTO_TAGS[photo.name] || state.panels[i].tag;
+        state.panels[i].sub = PHOTO_SUBCAPTIONS[photo.name] || '';
+        const tagInput = group.querySelector('.tag-input');
+        if (tagInput) tagInput.value = state.panels[i].tag;
+        const subInput = group.querySelector('.sub-input');
+        if (subInput) subInput.value = state.panels[i].sub;
+      }
       schedulePreview();
       commitHistory();
     });
@@ -428,6 +501,7 @@ function buildPanelControls() {
     const tagInput = document.createElement('input');
     tagInput.type = 'text';
     tagInput.maxLength = 16;
+    tagInput.className = 'tag-input';
     tagInput.value = state.panels[i].tag || '';
     tagInput.addEventListener('input', () => {
       state.panels[i].tag = tagInput.value;
@@ -436,6 +510,38 @@ function buildPanelControls() {
     });
     tagLabel.appendChild(tagInput);
     group.appendChild(tagLabel);
+
+    // Second line under the role tag: location · time · quip.
+    const subLabel = document.createElement('label');
+    subLabel.textContent = 'Sub-caption';
+    const subInput = document.createElement('input');
+    subInput.type = 'text';
+    subInput.maxLength = 48;
+    subInput.className = 'sub-input';
+    subInput.placeholder = 'PLACE · 7:00 PM · QUIP';
+    subInput.value = state.panels[i].sub || '';
+    subInput.addEventListener('input', () => {
+      state.panels[i].sub = subInput.value;
+      schedulePreview();
+      commitSoon();
+    });
+    subLabel.appendChild(subInput);
+    group.appendChild(subLabel);
+
+    // "WANTED ★★★★★" pill on this panel's top-right corner.
+    const wantedLabel = document.createElement('label');
+    wantedLabel.className = 'check';
+    const wantedInput = document.createElement('input');
+    wantedInput.type = 'checkbox';
+    wantedInput.checked = !!state.panels[i].wanted;
+    wantedInput.addEventListener('change', () => {
+      state.panels[i].wanted = wantedInput.checked;
+      schedulePreview();
+      commitHistory();
+    });
+    wantedLabel.appendChild(wantedInput);
+    wantedLabel.appendChild(document.createTextNode(' Wanted ★★★★★ pill'));
+    group.appendChild(wantedLabel);
 
     box.appendChild(group);
   }
@@ -473,6 +579,95 @@ export function swapPanels(i) {
   buildPanelControls();
   commitHistory();
   schedulePreview();
+  return true;
+}
+
+// --- spread one photo across all panels -----------------------------------
+// Five distinct crops of one photo, cycled across the panels: wide (the
+// whole photo, face up), face close-up, left detail (face right of centre,
+// so more of the photo's left shows), right detail, tight detail. Every
+// crop is face-aware: the face centre (PHOTO_FACE, or a generic
+// upper-middle guess for an upload with no measured face) is placed at a
+// chosen spot in the panel, so no panel shows an empty or face-less crop.
+// Short panels that run under the masthead get the face centred in the
+// clear strip above the title instead of the panel centre — the same rule
+// autoFramePanels uses — so the title never covers a face.
+const SPREAD_CROPS = [
+  { kind: 'wide', zoom: 1.0, fx: 0.5 },
+  { kind: 'face', zoom: 1.7, fx: 0.5 },
+  { kind: 'left', zoom: 1.5, fx: 0.7 },
+  { kind: 'right', zoom: 1.5, fx: 0.3 },
+  { kind: 'tight', zoom: 2.2, fx: 0.5 },
+];
+const GENERIC_FACE = { cx: 0.5, cy: 0.3, top: 0.1, bottom: 0.4 };
+
+// Pan (ox, oy) that puts the photo's face centre at (fx, fy) of the panel,
+// clamped so the photo always covers the panel (the same cover-fit math as
+// drawPanelPhoto). fy null means the panel centre, or the centre of the
+// clear strip above the masthead when the panel is short and runs under it.
+function panFaceTo(rect, photo, zoom, fx, fy, H) {
+  const image = photo.image;
+  const iw = image.naturalWidth || image.width;
+  const ih = image.naturalHeight || image.height;
+  if (!iw || !ih) return { ox: 0, oy: 0 };
+  const base = Math.max(rect.w / iw, rect.h / ih) * zoom;
+  const dw = iw * base;
+  const dh = ih * base;
+  const face = PHOTO_FACE[photo.name] || GENERIC_FACE;
+  let ox = 0;
+  let oy = 0;
+  if (dw > rect.w + 1) {
+    const maxOx = (dw - rect.w) / 2;
+    ox = Math.max(-1, Math.min(1, ((fx * rect.w - face.cx * dw) - (rect.w - dw) / 2) / maxOx));
+  }
+  if (dh > rect.h + 1) {
+    const maxOy = (dh - rect.h) / 2;
+    let targetY = fy;
+    if (targetY === null || targetY === undefined) {
+      const titleTop = H * (0.63 - 0.059 * (state.titleSize || 1));
+      const underTitle = rect.y < titleTop && rect.y + rect.h > titleTop;
+      targetY = underTitle && rect.h < H * 0.45 ? ((titleTop - rect.y) / 2) / rect.h : 0.5;
+    }
+    oy = Math.max(-1, Math.min(1, ((targetY * rect.h - face.cy * dh) - (rect.h - dh) / 2) / maxOy));
+  }
+  return { ox, oy };
+}
+
+// Spread the FIRST loaded photo across every panel — all five panel
+// slots, not just the current layout's — each with a different crop
+// (SPREAD_CROPS, cycled). The first photo is the deterministic choice: it
+// is photo 1 in the slots, and it is the photo a user with a single photo
+// has loaded. Only the photo and its crop change — each panel keeps its
+// own role tag, sub-caption and flip — and the whole spread is one undo
+// step, so Undo restores the previous panels.
+export function spreadOnePhoto(photoIndex = 0) {
+  const photo = state.photos[photoIndex];
+  if (!photo || !photo.image) {
+    setStatus(photoIndex === 0 ? 'Load a photo first, then spread it across the panels.' : 'That photo is not loaded.');
+    return false;
+  }
+  const count = LAYOUTS[state.layout].panelCount;
+  const rects = coverPanelRects(preview.width, preview.height, state.layout);
+  // Panels beyond the current layout's count get their crops from the
+  // magazine geometry (the only 5-panel layout), so the spread survives a
+  // layout switch: switching to magazine still shows the same photo in
+  // every panel instead of reviving the old photos in the extra slots.
+  const magRects = state.layout === 'magazine' ? rects : coverPanelRects(preview.width, preview.height, 'magazine');
+  for (let i = 0; i < state.panels.length; i++) {
+    const panel = state.panels[i];
+    const rect = i < count ? rects[i] : magRects[i];
+    if (!panel || !rect) continue;
+    const crop = SPREAD_CROPS[i % SPREAD_CROPS.length];
+    const pan = panFaceTo(rect, photo, crop.zoom, crop.fx, null, preview.height);
+    panel.photo = photoIndex;
+    panel.zoom = crop.zoom;
+    panel.ox = pan.ox;
+    panel.oy = pan.oy;
+  }
+  buildPanelControls();
+  commitHistory();
+  schedulePreview();
+  setStatus(`Spread ${photo.label} across ${count} panel${count === 1 ? '' : 's'} — each with a different crop.`);
   return true;
 }
 
@@ -522,6 +717,7 @@ function syncAllControls() {
   buildLayoutPicker();
   buildGradePicker();
   buildTitleColors();
+  buildTitleStylePicker();
   buildPanelControls();
   buildLookSliders();
   syncStaticInputs();
@@ -533,7 +729,9 @@ function syncStaticInputs() {
   $('tagline-input').value = state.tagline;
   $('script-input').value = state.script;
   $('title-size').value = String(state.titleSize);
+  buildTitleStylePicker();
   $('outline-toggle').checked = state.outline !== false;
+  $('popout-toggle').checked = state.popout !== false;
 }
 
 // --- surprise me / auto layout ----------------------------------------------
@@ -639,6 +837,7 @@ function buildSampleButtons() {
 }
 
 function bindStaticControls() {
+  $('spread-btn').addEventListener('click', () => spreadOnePhoto());
   $('upload').addEventListener('change', async (event) => {
     const files = [...event.target.files];
     for (const file of files) {
@@ -657,6 +856,7 @@ function bindStaticControls() {
   $('title-size').addEventListener('input', (e) => { state.titleSize = Number(e.target.value); schedulePreview(); });
   $('title-size').addEventListener('change', () => commitHistory());
   $('outline-toggle').addEventListener('change', (e) => { state.outline = e.target.checked; schedulePreview(); commitHistory(); });
+  $('popout-toggle').addEventListener('change', (e) => { state.popout = e.target.checked; schedulePreview(); commitHistory(); });
 }
 
 // The action toolbar under the preview: undo/redo, surprise, auto layout,
@@ -695,6 +895,15 @@ async function applyShotScene() {
   const [sw, sh] = sizeParam.split('x').map(Number);
   if (LAYOUTS[layout]) state.layout = layout;
   if (GRADES[grade]) state.grade = grade;
+  // Pop-out hero for the scene: ?popout=0 turns it off, anything else
+  // (including absent) keeps the default ON.
+  if (query.get('popout') === '0') state.popout = false;
+  else if (query.get('popout') === '1') state.popout = true;
+  // Title style for the scene: ?titlestyle=stripes|smooth|neon. An
+  // unknown value keeps the default Stripes, so shots 1/3/4 render
+  // exactly as they do now.
+  const styleParam = query.get('titlestyle');
+  if (styleParam && TITLE_STYLES.some((s) => s.id === styleParam)) state.titleStyle = styleParam;
   state.title = title;
   state.tagline = tagline;
   state.script = script;
@@ -702,18 +911,22 @@ async function applyShotScene() {
   // or the legacy pair (the named photo + the other kit sample).
   const photosParam = query.get('photos');
   const photoNames = photosParam
-    ? photosParam.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 4)
+    ? photosParam.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 6)
     : [photoName, photoName === 'pier' ? 'boulevard' : 'pier'];
   const loaded = [];
   for (const name of photoNames) loaded.push(await loadSample(name));
   state.photos = loaded;
   // One panel entry per panel of the layout, each photo framed by its
-  // per-sample defaults so faces land inside the window.
+  // per-sample defaults so faces land inside the window. Panels take
+  // distinct photos in order (no duplicate face inside a cover); the
+  // second panel carries the WANTED pill (the first panel's top corners
+  // already hold the COMING SOON stamp, which the pill would collide
+  // with in narrow layouts).
   const count = LAYOUTS[state.layout].panelCount;
   state.panels = Array.from({ length: count }, (_, i) => {
     const name = photoNames[i % photoNames.length];
     const framing = PHOTO_FRAMING[name] || { zoom: 1.15, ox: 0, oy: 0 };
-    return { photo: i % loaded.length, zoom: framing.zoom, ox: framing.ox, oy: framing.oy, tag: PHOTO_TAGS[name] || PANEL_TAGS[i] || '', flip: false };
+    return { photo: i % loaded.length, zoom: framing.zoom, ox: framing.ox, oy: framing.oy, tag: PHOTO_TAGS[name] || PANEL_TAGS[i] || '', sub: PHOTO_SUBCAPTIONS[name] || '', wanted: i === 1, flip: false };
   });
   // Per-scene vertical-pan overrides (?oy=a,b,c): the small side panels are
   // wide and short, so the centred crop cuts faces off — the cover scenes pin
@@ -730,8 +943,18 @@ async function applyShotScene() {
   oyOverride.forEach((oy, i) => {
     if (state.panels[i] && Number.isFinite(oy)) state.panels[i].oy = Math.max(-1, Math.min(1, oy));
   });
+  // ?spread=<name> (editor shots): spread one loaded photo across every
+  // panel with different crops, so the shot shows the feature working.
+  // The named photo is the spread source; an unknown name falls back to
+  // the first loaded photo.
+  const spreadName = query.get('spread');
+  if (spreadName !== null) {
+    const idx = state.photos.findIndex((p) => p.name === spreadName);
+    spreadOnePhoto(idx >= 0 ? idx : 0);
+  }
   rebuildPhotoSlots();
   buildPanelControls();
+  syncStaticInputs();
   if (shot === 'cover' && sw > 0 && sh > 0) {
     preview.width = sw;
     preview.height = sh;
@@ -760,6 +983,7 @@ async function boot() {
   buildLayoutPicker();
   buildGradePicker();
   buildTitleColors();
+  buildTitleStylePicker();
   buildSampleButtons();
   buildPanelControls();
   buildLookSliders();
@@ -780,5 +1004,5 @@ async function boot() {
   window.__shotReady = true;
 }
 
-window.sunsetPanels = { state, renderPreview, exportCoverPNG, exportAllPNG, loadSample, EXPORT_SIZES, undo: undoHistory, redo: redoHistory, surpriseMe, autoLayout, flipPanel, swapPanels, commitHistory };
+window.sunsetPanels = { state, renderPreview, exportCoverPNG, exportAllPNG, loadSample, EXPORT_SIZES, undo: undoHistory, redo: redoHistory, surpriseMe, autoLayout, flipPanel, swapPanels, spreadOnePhoto, coverPanelRects, commitHistory };
 boot();
