@@ -19,8 +19,9 @@ export const TITLE_GRADIENTS = {
 // Title styles (the editor's Title style switcher). Stripes is the
 // default and renders exactly as the title always has: striped gradient
 // fill + 3D offsets + black outline. Smooth keeps the same palette and
-// offsets with a solid (unbanded) gradient. Neon outline is hollow
-// letters — gradient stroke, transparent fill, soft glow, no 3D offsets.
+// offsets with a solid (unbanded) gradient. Neon outline is a neon tube:
+// dark glyph fill (so the letter shapes read over busy photos) + a thick
+// gradient stroke + a restrained glow, no 3D offsets.
 export const TITLE_STYLES = [
   { id: 'stripes', label: 'Stripes' },
   { id: 'smooth', label: 'Smooth' },
@@ -154,8 +155,8 @@ function fitTitleFont(ctx, text, maxWidth, baseSize, font) {
 // a magenta offset, black outline, tilted two degrees. Faces stay clear
 // because every sample frames its face in the top of its photo.
 // `state.titleStyle` picks the fill: 'stripes' (default, striped gradient),
-// 'smooth' (same palette and offsets, solid gradient) or 'neon' (hollow
-// letters: gradient stroke, transparent fill, soft glow, no 3D offsets).
+// 'smooth' (same palette and offsets, solid gradient) or 'neon' (neon tube:
+// dark glyph fill, thick gradient stroke, restrained glow, no 3D offsets).
 export function drawPosterTitle(ctx, W, H, state, grade) {
   const u = W / 1080;
   const title = (state.title || '').toUpperCase();
@@ -178,7 +179,7 @@ export function drawPosterTitle(ctx, W, H, state, grade) {
   // 3D depth: purple offset, then magenta offset, then the gradient fill.
   // Kept shallow (about one glyph-stroke) so the offsets never reach the
   // role-tag blocks at the panels' bottom edge. Neon outline has no 3D
-  // offsets, so the hollow letters read cleanly.
+  // offsets, so the neon tube reads cleanly.
   if (style !== 'neon') {
     ctx.fillStyle = '#7b2ff7';
     ctx.fillText(title, u * 8, u * 10);
@@ -202,18 +203,23 @@ export function drawPosterTitle(ctx, W, H, state, grade) {
   }
   const glowAmt = state.glowAmount ?? 0;
   if (style === 'neon') {
-    // Hollow letters: gradient stroke, transparent fill, soft glow. A
-    // dark under-stroke (when the outline toggle is on) keeps the hollow
-    // letters legible over bright photos.
+    // Neon tube: a dark glyph fill first, so the letter shapes are solid
+    // and readable over busy photos. The fill follows the glyphs exactly
+    // (it is fillText with the same font), so the counters read as proper
+    // holes inside dark letter bodies instead of one big empty space.
+    // Then a thick gradient stroke is the glowing neon tube, with a
+    // restrained glow so the shapes stay crisp instead of blurring out.
     if (state.outline !== false) {
       ctx.strokeStyle = '#14082e';
       ctx.lineWidth = Math.max(3, size * 0.17);
       ctx.strokeText(title, 0, 0);
     }
+    ctx.fillStyle = '#14082e';
+    ctx.fillText(title, 0, 0);
     ctx.shadowColor = '#ff2e88';
-    ctx.shadowBlur = size * 0.3 + (glowAmt > 0 ? size * 0.28 * (glowAmt / 50) : 0);
+    ctx.shadowBlur = size * 0.12 + (glowAmt > 0 ? size * 0.14 * (glowAmt / 50) : 0);
     ctx.strokeStyle = g;
-    ctx.lineWidth = Math.max(2, size * 0.09);
+    ctx.lineWidth = Math.max(2, size * 0.14);
     ctx.strokeText(title, 0, 0);
     ctx.shadowBlur = 0;
   } else {
