@@ -1075,6 +1075,8 @@ async function waitForFonts() {
       document.fonts.load('400 100px "Archivo Black"'),
       document.fonts.load('400 100px Anton'),
       document.fonts.load('400 100px "Bebas Neue"'),
+      document.fonts.load('900 100px "Barlow Condensed"'),
+      document.fonts.load('400 100px Staatliches'),
       document.fonts.load('600 40px Oswald'),
       document.fonts.load('500 40px Oswald'),
       document.fonts.load('400 60px Pacifico'),

@@ -39,6 +39,8 @@ export const TITLE_FONTS = [
   { id: 'Anton', label: 'Anton' },
   { id: 'Bebas Neue', label: 'Bebas Neue' },
   { id: 'Oswald', label: 'Oswald' },
+  { id: 'Barlow Condensed', label: 'Barlow Condensed' },
+  { id: 'Staatliches', label: 'Staatliches' },
 ];
 
 // Title colour templates (the editor's Colour template picker, below the
@@ -207,19 +209,21 @@ export function drawPosterTitle(ctx, W, H, state, grade) {
     // and readable over busy photos. The fill follows the glyphs exactly
     // (it is fillText with the same font), so the counters read as proper
     // holes inside dark letter bodies instead of one big empty space.
-    // Then a thick gradient stroke is the glowing neon tube, with a
-    // restrained glow so the shapes stay crisp instead of blurring out.
+    // Then a gradient stroke is the glowing neon tube, with a restrained
+    // glow so the shapes stay crisp instead of blurring out. The strokes
+    // are kept slim (0.10x) because narrow fonts (e.g. Staatliches) have
+    // small counters that thick strokes + glow fill in and turn to blobs.
     if (state.outline !== false) {
       ctx.strokeStyle = '#14082e';
-      ctx.lineWidth = Math.max(3, size * 0.17);
+      ctx.lineWidth = Math.max(2, size * 0.10);
       ctx.strokeText(title, 0, 0);
     }
     ctx.fillStyle = '#14082e';
     ctx.fillText(title, 0, 0);
     ctx.shadowColor = '#ff2e88';
-    ctx.shadowBlur = size * 0.12 + (glowAmt > 0 ? size * 0.14 * (glowAmt / 50) : 0);
+    ctx.shadowBlur = size * 0.07 + (glowAmt > 0 ? size * 0.14 * (glowAmt / 50) : 0);
     ctx.strokeStyle = g;
-    ctx.lineWidth = Math.max(2, size * 0.14);
+    ctx.lineWidth = Math.max(2, size * 0.10);
     ctx.strokeText(title, 0, 0);
     ctx.shadowBlur = 0;
   } else {
