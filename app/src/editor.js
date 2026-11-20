@@ -1,0 +1,784 @@
+// Sunset Panels — the editor.
+// Wires the controls (photos, layout, per-panel crop, caption, look, export),
+// keeps a live preview canvas, and serves the fixed ?shot= scenes the
+// screenshots are taken from. No network: photos come from the file picker or
+// the bundled samples, fonts are local files under app/fonts/.
+
+import { LAYOUTS, LAYOUT_IDS } from './layouts.js';
+import { GRADES, GRADE_IDS } from './art.js';
+import { EXPORT_SIZES, sizeById, renderCover, renderToCanvas, coverPanelRects } from './cover.js';
+
+const SAMPLES = [
+  { file: 'boulevard.jpg', label: 'Boulevard' },
+  { file: 'pier.jpg', label: 'Pier' },
+  { file: 'rider.jpg', label: 'Rider' },
+  { file: 'boardwalk.jpg', label: 'Boardwalk' },
+];
+const MAX_PHOTOS = 4;
+const TITLE_COLORS = ['#ffffff', '#ffd166', '#2fd6ff', '#ff2e88'];
+const PANEL_TAGS = ['THE DRIVER', 'THE ANGLER', 'THE RIDER', 'THE INSIDER', 'THE COURIER'];
+// Role tag that follows the photo (used by the fixed shot scenes).
+const PHOTO_TAGS = {
+  boulevard: 'THE DRIVER',
+  pier: 'THE ANGLER',
+  rider: 'THE RIDER',
+  boardwalk: 'THE INSIDER',
+};
+// Per-sample framing defaults for the fixed shot scenes: where each photo's
+// face sits, so the panels frame faces instead of cutting them off. All four
+// samples carry their face in the top of the photo, so a strong upward pan
+// is the safe default whenever a panel crops vertically.
+const PHOTO_FRAMING = {
+  boulevard: { zoom: 1.15, ox: 0, oy: 0.85 },
+  pier: { zoom: 1.15, ox: 0, oy: 0.85 },
+  rider: { zoom: 1.2, ox: -0.45, oy: 0.85 },
+  boardwalk: { zoom: 1.15, ox: 0, oy: 0.85 },
+};
+
+export const state = {
+  layout: 'hero-split',
+  photos: [],
+  panels: [
+    { photo: 0, zoom: 1.15, ox: 0, oy: 0, tag: 'THE DRIVER', flip: false },
+    { photo: 1, zoom: 1.15, ox: 0, oy: 0, tag: 'THE ANGLER', flip: false },
+    { photo: 2, zoom: 1.15, ox: 0, oy: 0, tag: 'THE RIDER', flip: false },
+    { photo: 3, zoom: 1.15, ox: 0, oy: 0, tag: 'THE INSIDER', flip: false },
+    { photo: 0, zoom: 1.15, ox: 0, oy: 0, tag: 'THE COURIER', flip: false },
+  ],
+  title: 'SUNSET BOULEVARD',
+  tagline: 'EVERY SUNSET HAS A PRICE',
+  script: 'chasing the golden hour',
+  titleColor: '#ffd166',
+  taglineColor: '#ffd166',
+  titleSize: 1,
+  outline: true,
+  // Look amounts (0–100). Defaults reproduce the pre-slider render exactly:
+  // full paint + grade, no halftone, medium grain, no title glow.
+  paintStrength: 100,
+  gradeStrength: 100,
+  halftoneAmount: 0,
+  grainAmount: 50,
+  glowAmount: 0,
+  grade: 'sunset',
+  previewSize: 'landscape',
+};
+
+const $ = (id) => document.getElementById(id);
+const preview = $('preview');
+const statusEl = $('status');
+let previewQueued = false;
+let dragPanel = null;
+let dragLast = null;
+
+// --- history (undo/redo) --------------------------------------------------
+// Snapshots hold only the serialisable editor state: panels carry photo
+// indices (never the Image objects), so a snapshot is a plain deep copy.
+// The undo stack's top is always the current state; undo pops it onto the
+// redo stack and applies the new top. commitHistory() is called after every
+// completed edit (button click, slider release, drag end, debounced typing).
+const HISTORY_FIELDS = ['layout', 'title', 'tagline', 'script', 'titleColor', 'taglineColor', 'titleSize', 'outline', 'paintStrength', 'gradeStrength', 'halftoneAmount', 'grainAmount', 'glowAmount', 'grade'];
+const undoStack = [];
+const redoStack = [];
+function snapshotState() {
+  const snap = { panels: state.panels.map((p) => ({ ...p })) };
+  HISTORY_FIELDS.forEach((k) => { snap[k] = state[k]; });
+  return snap;
+}
+function applySnapshot(snap) {
+  HISTORY_FIELDS.forEach((k) => { if (snap[k] !== undefined) state[k] = snap[k]; });
+  if (snap.panels) state.panels = snap.panels.map((p) => ({ ...p }));
+  syncAllControls();
+  schedulePreview();
+}
+function commitHistory() {
+  const snap = snapshotState();
+  const top = undoStack[undoStack.length - 1];
+  if (top && JSON.stringify(top) === JSON.stringify(snap)) return;
+  undoStack.push(snap);
+  if (undoStack.length > 50) undoStack.shift();
+  redoStack.length = 0;
+  updateHistoryButtons();
+}
+function undoHistory() {
+  if (undoStack.length < 2) return false;
+  redoStack.push(undoStack.pop());
+  applySnapshot(undoStack[undoStack.length - 1]);
+  updateHistoryButtons();
+  return true;
+}
+function redoHistory() {
+  if (!redoStack.length) return false;
+  const snap = redoStack.pop();
+  undoStack.push(snap);
+  applySnapshot(snap);
+  updateHistoryButtons();
+  return true;
+}
+function updateHistoryButtons() {
+  const undoBtn = $('undo-btn');
+  const redoBtn = $('redo-btn');
+  if (undoBtn) undoBtn.disabled = undoStack.length < 2;
+  if (redoBtn) redoBtn.disabled = redoStack.length === 0;
+}
+// Typing commits once, 500 ms after the last keystroke, so one edit is
+// one undo step instead of one step per character.
+let commitTimer = null;
+function commitSoon() {
+  clearTimeout(commitTimer);
+  commitTimer = setTimeout(commitHistory, 500);
+}
+
+function setStatus(text) {
+  if (statusEl) statusEl.textContent = text;
+}
+
+// --- photos ---------------------------------------------------------------
+
+export function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('could not load ' + url));
+    img.src = url;
+  });
+}
+
+async function loadSample(name) {
+  const sample = SAMPLES.find((s) => s.file.startsWith(name)) || SAMPLES[0];
+  const image = await loadImage(`samples/${sample.file}`);
+  return { image, label: sample.label, source: 'sample', name: sample.file.replace('.jpg', '') };
+}
+
+async function loadDefaultPhotos() {
+  const loaded = await Promise.all(SAMPLES.map((s) => loadSample(s.file.replace('.jpg', ''))));
+  state.photos = loaded;
+  rebuildPhotoSlots();
+  rebuildPanelPhotoOptions();
+}
+
+function addPhoto(photo) {
+  if (state.photos.length >= MAX_PHOTOS) {
+    state.photos[MAX_PHOTOS - 1] = photo;
+    setStatus(`Replaced photo ${MAX_PHOTOS} with ${photo.label}.`);
+  } else {
+    state.photos.push(photo);
+    setStatus(`Added ${photo.label} as photo ${state.photos.length}.`);
+  }
+  rebuildPhotoSlots();
+  rebuildPanelPhotoOptions();
+  schedulePreview();
+  commitHistory();
+}
+
+// --- preview --------------------------------------------------------------
+
+function previewDimensions() {
+  const size = sizeById(state.previewSize);
+  const maxSide = 880;
+  const scale = Math.min(1, maxSide / Math.max(size.w, size.h));
+  return { w: Math.round(size.w * scale), h: Math.round(size.h * scale) };
+}
+
+export function renderPreview() {
+  const dims = previewDimensions();
+  if (preview.width !== dims.w || preview.height !== dims.h) {
+    preview.width = dims.w;
+    preview.height = dims.h;
+  }
+  renderCover(preview.getContext('2d'), dims.w, dims.h, state);
+}
+
+export function schedulePreview() {
+  if (previewQueued) return;
+  previewQueued = true;
+  requestAnimationFrame(() => {
+    previewQueued = false;
+    renderPreview();
+  });
+}
+
+function previewPanelRects() {
+  return coverPanelRects(preview.width, preview.height, state.layout);
+}
+
+// Frame every panel's face for the current layout at the current render
+// size. All bundled samples carry their face in the top of the photo, so
+// whenever a panel crops the photo vertically the window is panned up to
+// the top (oy near 1); the rider's face also sits on the right, so the
+// window is panned left when the panel crops horizontally. Only ever
+// called at setup (boot / shot scene), never during a render — the user
+// can still drag any panel wherever they want afterwards.
+function autoFramePanels(W, H) {
+  const rects = coverPanelRects(W, H, state.layout);
+  state.panels.forEach((panel, i) => {
+    const rect = rects[i];
+    const photo = state.photos[panel.photo];
+    if (!rect || !photo || !photo.image) return;
+    const iw = photo.image.naturalWidth || photo.image.width;
+    const ih = photo.image.naturalHeight || photo.image.height;
+    if (!iw || !ih) return;
+    const base = Math.max(rect.w / iw, rect.h / ih) * (panel.zoom || 1);
+    if (ih * base > rect.h + 1) panel.oy = Math.max(panel.oy, 0.85);
+    if (iw * base > rect.w + 1 && photo.name === 'rider') panel.ox = Math.min(panel.ox, -0.45);
+  });
+}
+
+// Drag on the preview to pan the photo inside the panel under the pointer.
+function pointerToCanvas(event) {
+  const rect = preview.getBoundingClientRect();
+  return {
+    x: (event.clientX - rect.left) * (preview.width / rect.width),
+    y: (event.clientY - rect.top) * (preview.height / rect.height),
+  };
+}
+
+preview.addEventListener('pointerdown', (event) => {
+  const p = pointerToCanvas(event);
+  const rects = previewPanelRects();
+  const hit = rects.findIndex((r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);
+  if (hit < 0) return;
+  dragPanel = hit;
+  dragLast = p;
+  preview.setPointerCapture(event.pointerId);
+});
+
+preview.addEventListener('pointermove', (event) => {
+  if (dragPanel === null || !dragLast) return;
+  const p = pointerToCanvas(event);
+  const rects = previewPanelRects();
+  const rect = rects[dragPanel];
+  const panel = state.panels[dragPanel];
+  panel.ox = Math.max(-1, Math.min(1, panel.ox + (p.x - dragLast.x) / (rect.w * 0.5)));
+  panel.oy = Math.max(-1, Math.min(1, panel.oy + (p.y - dragLast.y) / (rect.h * 0.5)));
+  dragLast = p;
+  syncPanelControls();
+  schedulePreview();
+});
+
+preview.addEventListener('pointerup', () => { if (dragPanel !== null) commitHistory(); dragPanel = null; dragLast = null; });
+preview.addEventListener('pointercancel', () => { dragPanel = null; dragLast = null; });
+
+// --- controls -------------------------------------------------------------
+
+function buttonRow(container, items, current, onPick) {
+  container.innerHTML = '';
+  items.forEach((item) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'pick' + (item.id === current ? ' picked' : '');
+    button.textContent = item.label;
+    if (item.title) button.title = item.title;
+    button.addEventListener('click', () => {
+      onPick(item.id);
+      buttonRow(container, items, item.id, onPick);
+      schedulePreview();
+    });
+    container.appendChild(button);
+  });
+}
+
+function buildLayoutPicker() {
+  buttonRow(
+    $('layout-pick'),
+    LAYOUT_IDS.map((id) => ({ id, label: LAYOUTS[id].label, title: LAYOUTS[id].blurb })),
+    state.layout,
+    (id) => {
+      state.layout = id;
+      buildPanelControls();
+      rebuildPanelPhotoOptions();
+      commitHistory();
+    },
+  );
+}
+
+function buildGradePicker() {
+  buttonRow(
+    $('grade-pick'),
+    GRADE_IDS.map((id) => ({ id, label: GRADES[id].label })),
+    state.grade,
+    (id) => { state.grade = id; commitHistory(); },
+  );
+}
+
+function buildTitleColors() {
+  const box = $('title-colors');
+  box.innerHTML = '';
+  TITLE_COLORS.forEach((color) => {
+    const swatch = document.createElement('button');
+    swatch.type = 'button';
+    swatch.className = 'swatch' + (color === state.titleColor ? ' picked' : '');
+    swatch.style.background = color;
+    swatch.setAttribute('aria-label', `Title colour ${color}`);
+    swatch.addEventListener('click', () => {
+      state.titleColor = color;
+      buildTitleColors();
+      schedulePreview();
+      commitHistory();
+    });
+    box.appendChild(swatch);
+  });
+}
+
+function rebuildPhotoSlots() {
+  const box = $('photo-slots');
+  box.innerHTML = '';
+  for (let i = 0; i < MAX_PHOTOS; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'slot' + (state.photos[i] ? '' : ' empty');
+    slot.textContent = state.photos[i] ? `${i + 1}. ${state.photos[i].label}` : `${i + 1}. —`;
+    box.appendChild(slot);
+  }
+}
+
+function panelPhotoOptions(panelIndex) {
+  const select = document.querySelector(`#panel-${panelIndex} select`);
+  if (!select) return;
+  const current = state.panels[panelIndex].photo;
+  select.innerHTML = '';
+  state.photos.forEach((photo, i) => {
+    const option = document.createElement('option');
+    option.value = String(i);
+    option.textContent = `Photo ${i + 1} — ${photo.label}`;
+    select.appendChild(option);
+  });
+  select.value = String(current);
+}
+
+function rebuildPanelPhotoOptions() {
+  document.querySelectorAll('#panel-controls .panel-group').forEach((group, i) => panelPhotoOptions(i));
+}
+
+// One control group per panel of the current layout, with a photo picker,
+// crop sliders and an editable role name-tag.
+function buildPanelControls() {
+  const count = LAYOUTS[state.layout].panelCount;
+  const box = $('panel-controls');
+  box.innerHTML = '';
+  for (let i = 0; i < count; i++) {
+    if (!state.panels[i]) {
+      state.panels[i] = { photo: i % Math.max(1, state.photos.length), zoom: 1.15, ox: 0, oy: 0, tag: PANEL_TAGS[i] || '', flip: false };
+    }
+    const group = document.createElement('fieldset');
+    group.className = 'panel-group';
+    group.id = `panel-${i}`;
+    const legend = document.createElement('legend');
+    legend.textContent = `Panel ${i + 1}`;
+    group.appendChild(legend);
+
+    // Flip (mirror this panel) and Swap (exchange this panel with the next).
+    const actionRow = document.createElement('div');
+    actionRow.className = 'row panel-actions';
+    const flipBtn = document.createElement('button');
+    flipBtn.type = 'button';
+    flipBtn.className = 'mini' + (state.panels[i].flip ? ' picked' : '');
+    flipBtn.textContent = 'Flip ↔';
+    flipBtn.title = 'Mirror this panel horizontally';
+    flipBtn.addEventListener('click', () => {
+      flipPanel(i);
+      buildPanelControls();
+    });
+    actionRow.appendChild(flipBtn);
+    const swapBtn = document.createElement('button');
+    swapBtn.type = 'button';
+    swapBtn.className = 'mini';
+    swapBtn.textContent = i < count - 1 ? 'Swap →' : 'Swap ↺';
+    swapBtn.title = 'Swap this panel with the next one';
+    swapBtn.addEventListener('click', () => swapPanels(i));
+    actionRow.appendChild(swapBtn);
+    group.appendChild(actionRow);
+
+    const photoLabel = document.createElement('label');
+    photoLabel.textContent = 'Photo';
+    const select = document.createElement('select');
+    select.addEventListener('change', () => {
+      state.panels[i].photo = Number(select.value);
+      schedulePreview();
+      commitHistory();
+    });
+    photoLabel.appendChild(select);
+    group.appendChild(photoLabel);
+
+    const sliders = [
+      { key: 'zoom', label: 'Zoom', min: 1, max: 2.5, step: 0.05 },
+      { key: 'ox', label: 'Pan left–right', min: -1, max: 1, step: 0.05 },
+      { key: 'oy', label: 'Pan up–down', min: -1, max: 1, step: 0.05 },
+    ];
+    sliders.forEach(({ key, label, min, max, step }) => {
+      const sliderLabel = document.createElement('label');
+      sliderLabel.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = String(min);
+      input.max = String(max);
+      input.step = String(step);
+      input.value = String(state.panels[i][key]);
+      input.dataset.panel = String(i);
+      input.dataset.key = key;
+      input.addEventListener('input', () => {
+        state.panels[i][key] = Number(input.value);
+        schedulePreview();
+      });
+      input.addEventListener('change', () => commitHistory());
+      sliderLabel.appendChild(input);
+      group.appendChild(sliderLabel);
+    });
+
+    const tagLabel = document.createElement('label');
+    tagLabel.textContent = 'Name tag';
+    const tagInput = document.createElement('input');
+    tagInput.type = 'text';
+    tagInput.maxLength = 16;
+    tagInput.value = state.panels[i].tag || '';
+    tagInput.addEventListener('input', () => {
+      state.panels[i].tag = tagInput.value;
+      schedulePreview();
+      commitSoon();
+    });
+    tagLabel.appendChild(tagInput);
+    group.appendChild(tagLabel);
+
+    box.appendChild(group);
+  }
+  rebuildPanelPhotoOptions();
+}
+
+function syncPanelControls() {
+  document.querySelectorAll('#panel-controls input[type=range]').forEach((input) => {
+    const panel = state.panels[Number(input.dataset.panel)];
+    input.value = String(panel[input.dataset.key]);
+  });
+}
+
+// --- per-panel flip / swap --------------------------------------------------
+
+// Mirror one panel's photo horizontally.
+export function flipPanel(i) {
+  const panel = state.panels[i];
+  if (!panel) return false;
+  panel.flip = !panel.flip;
+  commitHistory();
+  schedulePreview();
+  return panel.flip;
+}
+
+// Exchange one panel's photo and settings with the next panel's (wraps
+// from the last panel back to the first).
+export function swapPanels(i) {
+  const count = LAYOUTS[state.layout].panelCount;
+  const j = (i + 1) % count;
+  if (i === j) return false;
+  const tmp = state.panels[i];
+  state.panels[i] = state.panels[j];
+  state.panels[j] = tmp;
+  buildPanelControls();
+  commitHistory();
+  schedulePreview();
+  return true;
+}
+
+// --- look sliders -----------------------------------------------------------
+// Every slider drives a real renderer parameter (see art.js / cover.js):
+// Paint = photo grade strength, Grade = sky grade strength, Halftone = dot
+// strength, Grain = grain amount, Glow = magenta glow behind the title.
+// No dead controls: 0 means the effect is off, 100 is full strength.
+const LOOK_SLIDERS = [
+  { key: 'paintStrength', label: 'Paint', title: 'Photo grade strength — how strongly the sunset grade tints the photos' },
+  { key: 'gradeStrength', label: 'Grade', title: 'Sky grade strength — how strongly the sunset palette colours the sky' },
+  { key: 'halftoneAmount', label: 'Halftone', title: 'Halftone dot strength over the caption band' },
+  { key: 'grainAmount', label: 'Grain', title: 'Film grain amount' },
+  { key: 'glowAmount', label: 'Glow', title: 'Magenta glow behind the title' },
+];
+
+function buildLookSliders() {
+  const box = $('look-sliders');
+  box.innerHTML = '';
+  LOOK_SLIDERS.forEach(({ key, label, title }) => {
+    const row = document.createElement('label');
+    row.className = 'look-row';
+    row.title = title;
+    const name = document.createElement('span');
+    name.textContent = label;
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = '0';
+    input.max = '100';
+    input.step = '1';
+    input.value = String(state[key]);
+    input.dataset.key = key;
+    input.setAttribute('aria-label', `${label} — ${title}`);
+    input.addEventListener('input', () => {
+      state[key] = Number(input.value);
+      schedulePreview();
+    });
+    input.addEventListener('change', () => commitHistory());
+    row.appendChild(name);
+    row.appendChild(input);
+    box.appendChild(row);
+  });
+}
+
+// Rebuild every control from state (after undo/redo, surprise, auto layout).
+function syncAllControls() {
+  buildLayoutPicker();
+  buildGradePicker();
+  buildTitleColors();
+  buildPanelControls();
+  buildLookSliders();
+  syncStaticInputs();
+  updateHistoryButtons();
+}
+
+function syncStaticInputs() {
+  $('title-input').value = state.title;
+  $('tagline-input').value = state.tagline;
+  $('script-input').value = state.script;
+  $('title-size').value = String(state.titleSize);
+  $('outline-toggle').checked = state.outline !== false;
+}
+
+// --- surprise me / auto layout ----------------------------------------------
+
+const SURPRISE_TITLES = ['GOLDEN HOUR', 'NEON NIGHTS', 'VELVET SUNSET', 'COASTLINE KINGS', 'MIDNIGHT DRIVE', 'PALM & NEON', 'LAST LIGHT', 'SUMMER STATIC'];
+const SURPRISE_TAGLINES = ['ONE LAST SUMMER', 'DRIVE INTO THE LIGHT', 'THE CITY NEVER SLEEPS', 'GOLDEN HOUR, EVERY HOUR', 'WHERE THE PALMS MEET THE NEON', 'CHASE THE HORIZON', 'NO BRAKES AFTER DARK', 'EVERY SUNSET HAS A PRICE'];
+const SURPRISE_SCRIPTS = ['one last summer', 'coastline nights', 'velvet and neon', 'the long way home', 'summer static', 'palms in the rearview', 'golden hour gang', 'chasing the golden hour'];
+function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
+
+// New random layout + grade + caption from the built-in lists.
+export function surpriseMe() {
+  state.layout = pick(LAYOUT_IDS);
+  state.grade = pick(GRADE_IDS);
+  state.title = pick(SURPRISE_TITLES);
+  state.tagline = pick(SURPRISE_TAGLINES);
+  state.script = pick(SURPRISE_SCRIPTS);
+  state.titleColor = pick(TITLE_COLORS);
+  syncAllControls();
+  commitHistory();
+  schedulePreview();
+  setStatus('Surprise! New layout, grade and caption.');
+  return { layout: state.layout, grade: state.grade, title: state.title };
+}
+
+// The layout whose panel count best fits the loaded photos: one photo gets
+// the big hero panel, two get the wide banner, three get equal columns,
+// four or more get the five-panel magazine.
+const AUTO_LAYOUT_BY_PHOTOS = { 1: 'hero-split', 2: 'banner', 3: 'triple-strip' };
+export function autoLayout() {
+  const n = state.photos.filter((p) => p && p.image).length;
+  const layout = AUTO_LAYOUT_BY_PHOTOS[n] || 'magazine';
+  if (layout !== state.layout) {
+    state.layout = layout;
+    syncAllControls();
+    commitHistory();
+    schedulePreview();
+    setStatus(`Auto layout: ${LAYOUTS[layout].label} for ${n} photo${n === 1 ? '' : 's'}.`);
+  } else {
+    setStatus(`Auto layout: ${LAYOUTS[layout].label} already fits ${n} photo${n === 1 ? '' : 's'}.`);
+  }
+  return state.layout;
+}
+
+function buildPreviewSizePicker() {
+  buttonRow(
+    $('preview-size'),
+    EXPORT_SIZES.map((s) => ({ id: s.id, label: s.label })),
+    state.previewSize,
+    (id) => { state.previewSize = id; },
+  );
+}
+
+function buildExportButtons() {
+  const box = $('export-buttons');
+  box.innerHTML = '';
+  EXPORT_SIZES.forEach((size) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'export';
+    button.textContent = `Export PNG ${size.label}`;
+    button.addEventListener('click', async () => {
+      await exportCoverPNG(size.id);
+    });
+    box.appendChild(button);
+  });
+}
+
+export async function exportCoverPNG(sizeId) {
+  const size = sizeById(sizeId);
+  const canvas = renderToCanvas(size.w, size.h, state);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `sunset-panels-${size.w}x${size.h}.png`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  setStatus(`Saved sunset-panels-${size.w}x${size.h}.png`);
+  return blob;
+}
+
+// All three post sizes in one click, one file per size.
+export async function exportAllPNG() {
+  const blobs = [];
+  for (const size of EXPORT_SIZES) {
+    blobs.push(await exportCoverPNG(size.id));
+  }
+  setStatus(`Saved 3 PNGs: ${EXPORT_SIZES.map((s) => s.label).join(', ')}.`);
+  return blobs;
+}
+
+function buildSampleButtons() {
+  const box = $('sample-buttons');
+  box.innerHTML = '';
+  SAMPLES.forEach((sample) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = `Use ${sample.label} sample`;
+    button.addEventListener('click', async () => {
+      addPhoto(await loadSample(sample.file.replace('.jpg', '')));
+    });
+    box.appendChild(button);
+  });
+}
+
+function bindStaticControls() {
+  $('upload').addEventListener('change', async (event) => {
+    const files = [...event.target.files];
+    for (const file of files) {
+      try {
+        const image = await loadImage(URL.createObjectURL(file));
+        addPhoto({ image, label: file.name.replace(/\.[^.]+$/, '').slice(0, 24) || 'Upload', source: 'upload' });
+      } catch {
+        setStatus(`Could not read ${file.name}.`);
+      }
+    }
+    event.target.value = '';
+  });
+  $('title-input').addEventListener('input', (e) => { state.title = e.target.value; schedulePreview(); commitSoon(); });
+  $('tagline-input').addEventListener('input', (e) => { state.tagline = e.target.value; schedulePreview(); commitSoon(); });
+  $('script-input').addEventListener('input', (e) => { state.script = e.target.value; schedulePreview(); commitSoon(); });
+  $('title-size').addEventListener('input', (e) => { state.titleSize = Number(e.target.value); schedulePreview(); });
+  $('title-size').addEventListener('change', () => commitHistory());
+  $('outline-toggle').addEventListener('change', (e) => { state.outline = e.target.checked; schedulePreview(); commitHistory(); });
+}
+
+// The action toolbar under the preview: undo/redo, surprise, auto layout,
+// export all. Keyboard: Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z or Ctrl+Y redo
+// (not while typing in a text field — the browser's own undo wins there).
+function bindToolbar() {
+  $('undo-btn').addEventListener('click', () => undoHistory());
+  $('redo-btn').addEventListener('click', () => redoHistory());
+  $('surprise-btn').addEventListener('click', () => surpriseMe());
+  $('auto-btn').addEventListener('click', () => autoLayout());
+  $('export-all-btn').addEventListener('click', async () => { await exportAllPNG(); });
+  document.addEventListener('keydown', (event) => {
+    if (!(event.metaKey || event.ctrlKey)) return;
+    const target = event.target;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return;
+    const key = event.key.toLowerCase();
+    if (key === 'z' && !event.shiftKey) { event.preventDefault(); undoHistory(); }
+    else if ((key === 'z' && event.shiftKey) || key === 'y') { event.preventDefault(); redoHistory(); }
+  });
+}
+
+// --- fixed screenshot scenes ----------------------------------------------
+
+async function applyShotScene() {
+  const query = new URLSearchParams(location.search);
+  const shot = query.get('shot');
+  if (!shot) return false;
+  if (shot === 'cover') document.body.classList.add('shot-cover');
+  const photoName = query.get('photo') || 'pier';
+  const layout = query.get('layout') || 'hero-split';
+  const title = query.get('caption') || 'SUNSET HEIST';
+  const tagline = query.get('tagline') || 'EVERY SUNSET HAS A PRICE';
+  const script = query.get('script') || 'chasing the golden hour';
+  const grade = query.get('grade') || 'sunset';
+  const sizeParam = query.get('size') || '1920x1080';
+  const [sw, sh] = sizeParam.split('x').map(Number);
+  if (LAYOUTS[layout]) state.layout = layout;
+  if (GRADES[grade]) state.grade = grade;
+  state.title = title;
+  state.tagline = tagline;
+  state.script = script;
+  // Photos for the scene: an explicit comma list (?photos=pier,boulevard,…)
+  // or the legacy pair (the named photo + the other kit sample).
+  const photosParam = query.get('photos');
+  const photoNames = photosParam
+    ? photosParam.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 4)
+    : [photoName, photoName === 'pier' ? 'boulevard' : 'pier'];
+  const loaded = [];
+  for (const name of photoNames) loaded.push(await loadSample(name));
+  state.photos = loaded;
+  // One panel entry per panel of the layout, each photo framed by its
+  // per-sample defaults so faces land inside the window.
+  const count = LAYOUTS[state.layout].panelCount;
+  state.panels = Array.from({ length: count }, (_, i) => {
+    const name = photoNames[i % photoNames.length];
+    const framing = PHOTO_FRAMING[name] || { zoom: 1.15, ox: 0, oy: 0 };
+    return { photo: i % loaded.length, zoom: framing.zoom, ox: framing.ox, oy: framing.oy, tag: PHOTO_TAGS[name] || PANEL_TAGS[i] || '', flip: false };
+  });
+  // Per-scene vertical-pan overrides (?oy=a,b,c): the small side panels are
+  // wide and short, so the centred crop cuts faces off — the cover scenes pin
+  // their oy near the top of the photo instead. Only the scenes that carry
+  // the param change; the editor and triple-strip scenes keep the defaults.
+  // The auto-frame above already pans up to the faces; an explicit override
+  // still wins where a scene carries one.
+  if (shot === 'cover' && sw > 0 && sh > 0) autoFramePanels(sw, sh);
+  else autoFramePanels(preview.width, preview.height);
+  // (Note: ''.split(',').map(Number) is [0], not [], so an absent param
+  // must not reach the loop at all — it used to silently zero panel 0.)
+  const oyParam = query.get('oy');
+  const oyOverride = oyParam ? oyParam.split(',').map(Number) : [];
+  oyOverride.forEach((oy, i) => {
+    if (state.panels[i] && Number.isFinite(oy)) state.panels[i].oy = Math.max(-1, Math.min(1, oy));
+  });
+  rebuildPhotoSlots();
+  buildPanelControls();
+  if (shot === 'cover' && sw > 0 && sh > 0) {
+    preview.width = sw;
+    preview.height = sh;
+    renderCover(preview.getContext('2d'), sw, sh, state);
+  } else {
+    renderPreview();
+  }
+  return true;
+}
+
+async function waitForFonts() {
+  try {
+    await Promise.all([
+      document.fonts.load('400 100px "Archivo Black"'),
+      document.fonts.load('600 40px Oswald'),
+      document.fonts.load('500 40px Oswald'),
+      document.fonts.load('400 60px Pacifico'),
+    ]);
+    await document.fonts.ready;
+  } catch { /* fall back to system fonts if a file fails to load */ }
+}
+
+// --- boot -------------------------------------------------------------------
+
+async function boot() {
+  buildLayoutPicker();
+  buildGradePicker();
+  buildTitleColors();
+  buildSampleButtons();
+  buildPanelControls();
+  buildLookSliders();
+  buildPreviewSizePicker();
+  buildExportButtons();
+  bindStaticControls();
+  bindToolbar();
+  await waitForFonts();
+  const isShot = await applyShotScene();
+  if (!isShot) {
+    await loadDefaultPhotos();
+    autoFramePanels(preview.width, preview.height);
+    renderPreview();
+  }
+  commitHistory();
+  updateHistoryButtons();
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  window.__shotReady = true;
+}
+
+window.sunsetPanels = { state, renderPreview, exportCoverPNG, exportAllPNG, loadSample, EXPORT_SIZES, undo: undoHistory, redo: redoHistory, surpriseMe, autoLayout, flipPanel, swapPanels, commitHistory };
+boot();
