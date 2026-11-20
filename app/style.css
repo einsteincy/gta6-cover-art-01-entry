@@ -33,6 +33,20 @@
   font-display: swap;
   src: url('./fonts/BebasNeue-Regular.woff2') format('woff2');
 }
+@font-face {
+  font-family: 'Barlow Condensed';
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url('./fonts/BarlowCondensed-Black.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Staatliches';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/Staatliches-Regular.woff2') format('woff2');
+}
 
 :root {
   --bg: #120826;
