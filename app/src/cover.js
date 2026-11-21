@@ -19,12 +19,17 @@ export const TITLE_GRADIENTS = {
 // Title styles (the editor's Title style switcher). Stripes is the
 // default and renders exactly as the title always has: striped gradient
 // fill + 3D offsets + white outline. Smooth keeps the same palette and
-// offsets with a solid (unbanded) gradient. Neon outline is a neon tube:
-// dark glyph fill (so the letter shapes read over busy photos) + a thick
-// gradient stroke + a restrained glow, no 3D offsets.
+// offsets with a solid (unbanded) gradient. Chrome (Round 6) is the
+// metallic-gold treatment the top-rated covers use: the same palette in
+// five fine horizontal bands, with the same outline and offsets as
+// Stripes, so it reads identically in every font and template. Neon
+// outline is a neon tube: dark glyph fill (so the letter shapes read
+// over busy photos) + a thick gradient stroke + a restrained glow, no
+// 3D offsets.
 export const TITLE_STYLES = [
   { id: 'stripes', label: 'Stripes' },
   { id: 'smooth', label: 'Smooth' },
+  { id: 'chrome', label: 'Chrome' },
   { id: 'neon', label: 'Neon outline' },
 ];
 
@@ -139,6 +144,17 @@ function drawEmptyPanel(ctx, rect, u) {
   ctx.restore();
 }
 
+// Linear interpolation between two #rrggbb colours, for the Chrome
+// title style's intermediate bands.
+function hexLerp(a, b, t) {
+  const pa = parseInt(a.slice(1), 16);
+  const pb = parseInt(b.slice(1), 16);
+  const r = Math.round((((pa >> 16) & 255) * (1 - t)) + (((pb >> 16) & 255) * t));
+  const g = Math.round((((pa >> 8) & 255) * (1 - t)) + (((pb >> 8) & 255) * t));
+  const bl = Math.round(((pa & 255) * (1 - t)) + ((pb & 255) * t));
+  return `rgb(${r}, ${g}, ${bl})`;
+}
+
 // Fit the title font so the text never runs past maxWidth. `font` is the
 // title font family from state.titleFont (default 'Archivo Black').
 function fitTitleFont(ctx, text, maxWidth, baseSize, font) {
@@ -209,6 +225,26 @@ export function drawPosterTitle(ctx, W, H, state, grade) {
     g.addColorStop(0.66, stripes[1]);
     g.addColorStop(0.67, stripes[2]);
     g.addColorStop(1, stripes[2]);
+  } else if (style === 'chrome') {
+    // Chrome: the same palette in five fine horizontal bands — the
+    // metallic-gold treatment the top-rated covers use. The midpoints
+    // are interpolated between the template stops, so every colour
+    // template gets its own chrome. The bands stop at 0.2/0.4/0.6/0.8
+    // (hard edges, like Stripes) instead of blending.
+    const bands = [
+      stripes[0],
+      hexLerp(stripes[0], stripes[1], 0.5),
+      stripes[1],
+      hexLerp(stripes[1], stripes[2], 0.5),
+      stripes[2],
+    ];
+    bands.forEach((c, i) => {
+      const s0 = i / 5;
+      const s1 = (i + 1) / 5;
+      g.addColorStop(s0, c);
+      g.addColorStop(Math.min(1, s1 - 0.01), c);
+    });
+    g.addColorStop(1, bands[4]);
   } else {
     // Smooth / neon: the same palette as one continuous gradient.
     g.addColorStop(0, stripes[0]);

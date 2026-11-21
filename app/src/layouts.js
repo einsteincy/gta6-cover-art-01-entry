@@ -76,6 +76,45 @@ export const LAYOUTS = {
       ];
     },
   },
+
+  // Ensemble (Round 6): six panels — the densest layout, matching the
+  // paid zone (every paid-zone cover has 6–7 panels; Magazine tops out
+  // at 5). Hero on the left (full height), right side a wide scenic
+  // strip on top and a 2x2 grid below. The rows are UNEQUAL on purpose:
+  // strip 0.16 + row 1 0.28 of zone height (+ gutters) put row 2's top
+  // edge at ~0.42H, leaving ~0.12H of clear space above the masthead
+  // (title top 0.5425H) — the same clear-strip geometry the guard
+  // already proves for Magazine's bottom row. Equal rows would push
+  // row 2 to ~0.51H, where the clear strip is only ~0.04H and the
+  // guard cannot keep faces whole (the face would be cut at the top
+  // and covered at the chin). The strip sits fully above the masthead,
+  // so it never needs the title guard; it is a scene panel — a wide
+  // landscape slice (pier, dusk) — the way the top covers mix scene
+  // panels in with the faces.
+  ensemble: {
+    label: 'Ensemble',
+    blurb: 'Hero, a scenic strip, and four small panels.',
+    panelCount: 6,
+    panels(zone) {
+      const g = zone.gutter;
+      const heroW = zone.w * 0.50;
+      const sideX = zone.x + heroW + g;
+      const sideW = zone.x + zone.w - sideX;
+      const stripH = zone.h * 0.16;
+      const row1H = zone.h * 0.28;
+      const row2Y = zone.y + stripH + g + row1H + g;
+      const row2H = zone.y + zone.h - row2Y;
+      const colW = (sideW - g) / 2;
+      return [
+        { x: zone.x, y: zone.y, w: heroW, h: zone.h },
+        { x: sideX, y: zone.y, w: sideW, h: stripH },
+        { x: sideX, y: zone.y + stripH + g, w: colW, h: row1H },
+        { x: sideX + colW + g, y: zone.y + stripH + g, w: colW, h: row1H },
+        { x: sideX, y: row2Y, w: colW, h: row2H },
+        { x: sideX + colW + g, y: row2Y, w: colW, h: row2H },
+      ];
+    },
+  },
 };
 
 export const LAYOUT_IDS = Object.keys(LAYOUTS);

@@ -748,13 +748,14 @@ export function spreadOnePhoto(photoIndex = 0) {
   const count = LAYOUTS[state.layout].panelCount;
   const rects = coverPanelRects(preview.width, preview.height, state.layout);
   // Panels beyond the current layout's count get their crops from the
-  // magazine geometry (the only 5-panel layout), so the spread survives a
-  // layout switch: switching to magazine still shows the same photo in
-  // every panel instead of reviving the old photos in the extra slots.
-  const magRects = state.layout === 'magazine' ? rects : coverPanelRects(preview.width, preview.height, 'magazine');
+  // ensemble geometry (the layout with the most panels, six), so the
+  // spread survives a layout switch: switching layouts still shows the
+  // same photo in every panel instead of reviving the old photos in the
+  // extra slots.
+  const ensRects = state.layout === 'ensemble' ? rects : coverPanelRects(preview.width, preview.height, 'ensemble');
   for (let i = 0; i < state.panels.length; i++) {
     const panel = state.panels[i];
-    const rect = i < count ? rects[i] : magRects[i];
+    const rect = i < count ? rects[i] : ensRects[i];
     if (!panel || !rect) continue;
     const crop = SPREAD_CROPS[i % SPREAD_CROPS.length];
     const pan = panFaceTo(rect, photo, crop.zoom, crop.fx, null, preview.height);
@@ -862,8 +863,9 @@ export function surpriseMe() {
 
 // The layout whose panel count best fits the loaded photos: one photo gets
 // the big hero panel, two get the wide banner, three get equal columns,
-// four or more get the five-panel magazine.
-const AUTO_LAYOUT_BY_PHOTOS = { 1: 'hero-split', 2: 'banner', 3: 'triple-strip' };
+// four or five get the five-panel magazine, six get the Ensemble (hero +
+// scenic strip + 2x2) — the densest layout, matching the paid zone.
+const AUTO_LAYOUT_BY_PHOTOS = { 1: 'hero-split', 2: 'banner', 3: 'triple-strip', 4: 'magazine', 5: 'magazine', 6: 'ensemble' };
 export function autoLayout() {
   const n = state.photos.filter((p) => p && p.image).length;
   const layout = AUTO_LAYOUT_BY_PHOTOS[n] || 'magazine';
@@ -1003,8 +1005,8 @@ async function applyShotScene() {
   // (including absent) keeps the default ON.
   if (query.get('popout') === '0') state.popout = false;
   else if (query.get('popout') === '1') state.popout = true;
-  // Title style for the scene: ?titlestyle=stripes|smooth|neon. An
-  // unknown value keeps the default Stripes, so shots 1/3/4 render
+  // Title style for the scene: ?titlestyle=stripes|smooth|chrome|neon.
+  // An unknown value keeps the default Stripes, so shots 1/3/4 render
   // exactly as they do now.
   const styleParam = query.get('titlestyle');
   if (styleParam && TITLE_STYLES.some((s) => s.id === styleParam)) state.titleStyle = styleParam;
