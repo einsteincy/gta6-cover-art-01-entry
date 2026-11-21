@@ -269,12 +269,12 @@ function previewPanelRects() {
 function autoFramePanels(W, H) {
   const rects = coverPanelRects(W, H, state.layout);
   // Top edge of the masthead's glyphs (centre 0.63H minus half the cap
-  // height, ~0.36 of the 0.165H title size, scaled by the title-size
-  // slider), minus the dark outline, which extends a further 0.14 of the
+  // height, ~0.36 of the 0.175H title size, scaled by the title-size
+  // slider), minus the outline, which extends a further 0.14 of the
   // title size above the glyphs. The 3D offsets only extend downwards.
   // (The outline matters: a face whose chin sits under it reads as
   // covered by the title even though it clears the glyph top.)
-  const titleTop = H * (0.63 - 0.0821 * (state.titleSize || 1));
+  const titleTop = H * (0.63 - 0.0875 * (state.titleSize || 1));
   state.panels.forEach((panel, i) => {
     const rect = rects[i];
     const photo = state.photos[panel.photo];
@@ -723,7 +723,7 @@ function panFaceTo(rect, photo, zoom, fx, fy, H) {
     const maxOy = (dh - rect.h) / 2;
     let targetY = fy;
     if (targetY === null || targetY === undefined) {
-      const titleTop = H * (0.63 - 0.059 * (state.titleSize || 1));
+      const titleTop = H * (0.63 - 0.063 * (state.titleSize || 1));
       const underTitle = rect.y < titleTop && rect.y + rect.h > titleTop;
       targetY = underTitle && rect.h < H * 0.45 ? ((titleTop - rect.y) / 2) / rect.h : 0.5;
     }

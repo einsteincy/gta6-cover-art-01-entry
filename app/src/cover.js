@@ -4,7 +4,7 @@
 // are the same drawing. Photos are drawn cover-fit per panel with the panel's
 // own zoom and pan; the caption is big condensed lettering over the low sun.
 
-import { GRADES, paintSky, paintSun, paintSkyline, paintPalm, paintPhotoGrade, paintGrain, paintHalftone, paintVignette, paintStarburst, paintBarcode } from './art.js';
+import { GRADES, paintSky, paintSkyline, paintPalm, paintPhotoGrade, paintGrain, paintHalftone, paintVignette, paintStarburst, paintBarcode } from './art.js';
 import { LAYOUTS, layoutPanels } from './layouts.js';
 
 // Title stripe palettes, picked by the editor's title-colour swatch. The
@@ -18,7 +18,7 @@ export const TITLE_GRADIENTS = {
 
 // Title styles (the editor's Title style switcher). Stripes is the
 // default and renders exactly as the title always has: striped gradient
-// fill + 3D offsets + black outline. Smooth keeps the same palette and
+// fill + 3D offsets + white outline. Smooth keeps the same palette and
 // offsets with a solid (unbanded) gradient. Neon outline is a neon tube:
 // dark glyph fill (so the letter shapes read over busy photos) + a thick
 // gradient stroke + a restrained glow, no 3D offsets.
@@ -152,18 +152,30 @@ function fitTitleFont(ctx, text, maxWidth, baseSize, font) {
 }
 
 // Big condensed title over the photo panels: the masthead IS the poster.
-// It sits across the lower third of the panels (~0.63H, ~0.165H tall) with
+// It sits across the lower third of the panels (~0.63H, ~0.175H tall) with
 // the same yellow/pink/purple striped gradient fill, purple 3D offset under
-// a magenta offset, black outline, tilted two degrees. Faces stay clear
-// because every sample frames its face in the top of its photo.
+// a magenta offset, and a WHITE outline — the white halo separates the
+// letters from any photo background, the way the top-rated covers do
+// (Round 5: the old dark outline merged into dark photo areas, and the
+// title spanned only ~0.77W where the top covers span ~0.85–0.95W).
+// The size is 0.175H, not 0.185H: at 0.185H the title's top edge
+// (0.5375H) plus the taller panels pushed the bottom-row faces' eyes
+// above the panels' top edge (verified by a Playwright probe — the
+// guard can only pan a face so far up before the subject stops
+// fitting). At 0.175H the eyes stay visible with the chin at the
+// title's top edge. Faces stay clear because every sample frames its
+// face in the top of its photo, and the editor's masthead guard
+// (autoFramePanels) knows this geometry: titleTop is 0.63H minus
+// (0.36 cap + 0.14 outline) of 0.175H.
 // `state.titleStyle` picks the fill: 'stripes' (default, striped gradient),
 // 'smooth' (same palette and offsets, solid gradient) or 'neon' (neon tube:
-// dark glyph fill, thick gradient stroke, restrained glow, no 3D offsets).
+// dark glyph fill, thick gradient stroke, restrained glow, no 3D offsets —
+// the neon look keeps its dark fill, it is a different treatment).
 export function drawPosterTitle(ctx, W, H, state, grade) {
   const u = W / 1080;
   const title = (state.title || '').toUpperCase();
   if (!title) return;
-  const baseSize = H * 0.165 * (state.titleSize || 1);
+  const baseSize = H * 0.175 * (state.titleSize || 1);
   const font = TITLE_FONTS.some((f) => f.id === state.titleFont) ? state.titleFont : 'Archivo Black';
   const size = fitTitleFont(ctx, title, W * 0.94, baseSize, font);
   // Colour template wins when set (default 'sunset' = the original
@@ -227,9 +239,11 @@ export function drawPosterTitle(ctx, W, H, state, grade) {
     ctx.strokeText(title, 0, 0);
     ctx.shadowBlur = 0;
   } else {
-    // Black outline, then the gradient fill (striped or smooth).
+    // White outline, then the gradient fill (striped or smooth). The
+    // white halo is what makes the title pop off busy photos; the purple
+    // and magenta 3D offsets underneath still give it depth.
     if (state.outline !== false) {
-      ctx.strokeStyle = '#14082e';
+      ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = Math.max(3, size * 0.14);
       ctx.strokeText(title, 0, 0);
     }
@@ -259,7 +273,7 @@ export function drawScriptSubtitle(ctx, W, H, state) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
-  ctx.translate(W / 2, H * 0.705);
+  ctx.translate(W / 2, H * 0.73);
   ctx.rotate(-0.02);
   ctx.strokeStyle = '#14082e';
   ctx.lineWidth = Math.max(2, size * 0.1);
@@ -442,11 +456,20 @@ function drawSeal(ctx, W, H, grade) {
   ctx.restore();
 }
 
-// Production-credits footer along the very bottom edge. The text is
+// Production-credits footer along the very bottom edge. The cast list is
+// built from the panels' role tags (the "THE " prefix stripped), so the
+// footer names the whole cast the way the top covers do — "STARRING THE
+// BOULEVARD QUEEN" named one person; now every panel's role is listed.
+// Falls back to the static text when a cover has no tags. The text is
 // shrunk to fit between the barcode (left) and the seal (right), so it
 // never runs off the canvas or under either of them.
-function drawCredits(ctx, W, H) {
-  const text = 'SUNSET PANELS PRESENTS  •  STARRING THE BOULEVARD QUEEN  •  A GOLDEN HOUR PRODUCTION';
+function drawCredits(ctx, W, H, state) {
+  const roles = (state && Array.isArray(state.panels) ? state.panels : [])
+    .map((p) => (p && p.tag ? String(p.tag).replace(/^THE\s+/i, '').trim() : ''))
+    .filter(Boolean);
+  const text = roles.length
+    ? `SUNSET PANELS PRESENTS  •  STARRING ${roles.join(' · ').toUpperCase()}  •  A GOLDEN HOUR PRODUCTION`
+    : 'SUNSET PANELS PRESENTS  •  STARRING THE BOULEVARD QUEEN  •  A GOLDEN HOUR PRODUCTION';
   const maxW = W * 0.72;
   let size = Math.max(9, W * 0.0135);
   ctx.save();
@@ -459,26 +482,36 @@ function drawCredits(ctx, W, H) {
   ctx.fillStyle = 'rgba(245, 238, 252, 0.75)';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, W / 2, H * 0.972);
+  ctx.fillText(text, W / 2, H * 0.962);
   ctx.restore();
 }
 
-// Tagline on a translucent black ribbon under the title.
+// Tagline on a translucent black ribbon in the footer band (Round 5: it
+// used to sit at 0.825H, where it bisected the footer sun disc and sat
+// far from the masthead; the footer is now a slim dark band, so the
+// ribbon lives there, clear of the seal at the right — its width is
+// capped at 0.68W and the type shrinks to fit, so long taglines stay
+// inside the ribbon instead of spilling past its ends).
 export function drawTaglineRibbon(ctx, W, H, state) {
   const tagline = (state.tagline || '').toUpperCase();
   if (!tagline) return;
   const u = W / 1080;
-  const size = Math.max(13, H * 0.03);
+  let size = Math.max(13, H * 0.03);
   ctx.save();
   ctx.font = `600 ${size}px Oswald, sans-serif`;
   try { ctx.letterSpacing = `${Math.max(2, size * 0.22)}px`; } catch { /* older canvas: no letter spacing */ }
-  const tw = ctx.measureText(tagline).width;
   const padX = u * 26;
   const padY = H * 0.011;
-  const ribbonW = Math.min(W * 0.92, tw + padX * 2);
+  let tw = ctx.measureText(tagline).width;
+  while (tw + padX * 2 > W * 0.68 && size > 10) {
+    size -= 1;
+    ctx.font = `600 ${size}px Oswald, sans-serif`;
+    tw = ctx.measureText(tagline).width;
+  }
+  const ribbonW = Math.min(W * 0.68, tw + padX * 2);
   const ribbonH = size + padY * 2;
   const rx = (W - ribbonW) / 2;
-  const ry = H * 0.825;
+  const ry = H * 0.878;
   ctx.fillStyle = 'rgba(12, 5, 26, 0.78)';
   ctx.fillRect(rx, ry, ribbonW, ribbonH);
   ctx.fillStyle = state.taglineColor || '#ffd166';
@@ -593,9 +626,12 @@ function drawHeroBreakout(ctx, W, H, state, rects, grade, paintS) {
 }
 
 // Panel rects for a cover of size W x H with the given layout.
-// The panel zone now runs to 0.80H so the photos fill most of the poster
-// and the masthead can overlap their lower third; the footer band below
-// it holds only the tagline ribbon, barcode, seal and credits.
+// The panel zone runs to 0.80H (Round 5 tried 0.86H for a denser cover,
+// but the taller panels shrink the clear strip above the title so far
+// that the bottom-row faces' eyes are pushed above the panels' top edge
+// — verified by a Playwright probe: the guard can only pan a face up
+// until the subject stops fitting. The density gain now comes from the
+// dark footer band below the panels instead of taller panels).
 export function coverPanelRects(W, H, layout) {
   const gutter = Math.max(6, W * 0.012);
   const zone = { x: W * 0.03, y: H * 0.05, w: W * 0.94, h: H * 0.75, gutter };
@@ -617,13 +653,25 @@ export function renderCover(ctx, W, H, state) {
   ctx.clearRect(0, 0, W, H);
 
   paintSky(ctx, W, H, grade, gradeS);
-  paintSun(ctx, W / 2, H * 0.82, H * 0.11, grade);
-  // Thin skyline footer strip at the very bottom (clipped so only the
-  // towers' bases show), not the tall black band that used to cut the
-  // cover in two.
+  // Dark footer band (0.80H to the bottom edge), the way the top-rated
+  // covers do it: a deep purple gradient, with a thin gold horizon line
+  // along its top edge so the sunset accent survives. Round 5: the
+  // footer used to be a tall orange band with a sun disc that the
+  // tagline ribbon cut in half; the disc is gone, and the band now
+  // holds the ribbon, barcode, seal and credits on clean dark.
+  const footer = ctx.createLinearGradient(0, H * 0.80, 0, H);
+  footer.addColorStop(0, grade.sky[1]);
+  footer.addColorStop(1, grade.silhouette);
+  ctx.fillStyle = footer;
+  ctx.fillRect(0, H * 0.80, W, H * 0.20);
+  ctx.fillStyle = grade.sun;
+  ctx.fillRect(0, H * 0.80, W, Math.max(2, H * 0.006));
+  // Thin skyline strip at the very bottom edge (clipped so only the
+  // towers' bases show, below the credits line — the old strip crossed
+  // the credits text and its towers poked through the letters).
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, H * 0.945, W, H * 0.055);
+  ctx.rect(0, H * 0.975, W, H * 0.025);
   ctx.clip();
   paintSkyline(ctx, W, H * 0.995, H, grade, 1234567);
   ctx.restore();
@@ -669,7 +717,7 @@ export function renderCover(ctx, W, H, state) {
     });
   }
 
-  if (halfAmt > 0) paintHalftone(ctx, W, H * 0.81, H * 0.97, grade, halfAmt / 50);
+  if (halfAmt > 0) paintHalftone(ctx, W, H * 0.80, H * 0.99, grade, halfAmt / 50);
 
   // Palm silhouettes framing the footer band, bases just inside the edges
   // so the trunk and the frond fan read as trees, not stray strokes.
@@ -694,7 +742,7 @@ export function renderCover(ctx, W, H, state) {
   // Bottom band: barcode ticket, seal sticker, credits footer.
   paintBarcode(ctx, W * 0.03, H * 0.885, W * 0.1, H * 0.045, 90210);
   drawSeal(ctx, W, H, grade);
-  drawCredits(ctx, W, H);
+  drawCredits(ctx, W, H, state);
 
   if (grainAmt > 0) paintGrain(ctx, W, H, Math.floor((W * H) / 900 * (grainAmt / 50)));
   paintVignette(ctx, W, H);
